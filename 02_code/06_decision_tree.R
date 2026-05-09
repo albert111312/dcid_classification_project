@@ -71,7 +71,7 @@ cat("\n===== CONFUSION MATRIX =====\n")
 print(cm_dtree)
 
 # --- 7. Variable Importance -------------------------------------------------
-png("FIG_DIAGNOSTICS, dtree_importance.png", width = 700, height = 500)
+png(file.path(FIG_DIAGNOSTICS, "dtree_importance.png"), width = 700, height = 500)
 vi_df <- data.frame(
   Variable = names(dtree_pruned$variable.importance),
   Importance = dtree_pruned$variable.importance
