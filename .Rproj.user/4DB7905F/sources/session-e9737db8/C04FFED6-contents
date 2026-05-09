@@ -1,0 +1,172 @@
+# ==============================================================================
+# 02_exploratory_analysis.R
+# Purpose: Descriptive statistics, visualizations, and class balance checks
+# ==============================================================================
+
+# --- 1. Load cleaned data (if necessary) -----------------------------------------------------
+# Note: If starting a new session, reload from CSV and re-apply factors:
+
+if (!exists("dcid")) {
+  dcid <- read_csv("01_data/02_processed/dcid_cleaned.csv", show_col_types = FALSE) %>%
+    mutate(
+      method_cat     = factor(method_cat),
+      target_type    = factor(target_type),
+      cyber_objective = factor(cyber_objective),
+      cio            = factor(cio),
+      obj_achievement = factor(obj_achievement),
+      concession     = factor(concession),
+      third_party    = factor(third_party),
+      supply_chain   = factor(supply_chain),
+      ransomware     = factor(ransomware),
+      damage_type    = factor(damage_type),
+      crit_infra_cat = factor(crit_infra_cat),
+      severity       = factor(severity, ordered = TRUE),
+      cyber_type     = factor(cyber_type, levels = c("Tactical", "Strategic"))
+    )
+  cat("Loaded dcid from CSV. Rows:", nrow(dcid), "\n")
+}
+
+# ============================================================================
+# 2. DEPENDENT VARIABLE DISTRIBUTION
+# ============================================================================
+
+cat("===== DV DISTRIBUTION =====\n")
+print(table(dcid$cyber_type))
+print(prop.table(table(dcid$cyber_type)))
+
+# Bar chart of class distribution
+ggplot(dcid, aes(x = cyber_type, fill = cyber_type)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  scale_fill_manual(values = c("Tactical" = "#D3C3F2", "Strategic" = "#00B399")) +
+  labs(title = "Distribution of Cyber Activity Type",
+       subtitle = "DCID 2.0 Dataset (N = 429)",
+       x = "Classification", y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+ggsave("03_outputs/figures/exploratory/dv_distribution.png", width = 6, height = 4)
+
+# ============================================================================
+# 3. STRATEGIC INDICATOR BREAKDOWN
+# ============================================================================
+
+# How many indicators did each incident meet?
+ggplot(dcid, aes(x = factor(indicator_count), fill = cyber_type)) +
+  geom_bar() +
+  scale_fill_manual(values = c("Tactical" = "#D3C3F2", "Strategic" = "#00B399")) +
+  labs(title = "Number of Strategic Indicators Met per Incident",
+       x = "Number of Indicators (out of 4)", y = "Count", fill = "Classification") +
+  theme_minimal()
+ggsave("03_outputs/figures/exploratory/indicator_count.png", width = 7, height = 4)
+
+# ============================================================================
+# 4. CROSS-TABULATIONS WITH PREDICTORS
+# ============================================================================
+
+# 4a. DV by Method
+cat("\n--- DV x Method ---\n")
+print(table(dcid$cyber_type, dcid$method_cat))
+
+ggplot(dcid, aes(x = method_cat, fill = cyber_type)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("Tactical" = "#D3C3F2", "Strategic" = "#00B399")) +
+  labs(title = "Cyber Type by Method of Interaction",
+       x = "Method", y = "Proportion", fill = "Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+ggsave("03_outputs/figures/exploratory/dv_by_method.png", width = 7, height = 4)
+
+# 4b. DV by Damage Type
+cat("\n--- DV x Damage Type ---\n")
+print(table(dcid$cyber_type, dcid$damage_type))
+
+ggplot(dcid, aes(x = damage_type, fill = cyber_type)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("Tactical" = "#D3C3F2", "Strategic" = "#00B399")) +
+  labs(title = "Cyber Type by Damage Type",
+       x = "Damage Type", y = "Proportion", fill = "Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+ggsave("03_outputs/figures/exploratory/dv_by_damage.png", width = 7, height = 4)
+
+# 4c. DV by Critical Infrastructure Sector
+cat("\n--- DV x Critical Infrastructure ---\n")
+print(table(dcid$cyber_type, dcid$crit_infra_cat))
+
+dcid %>%
+  count(crit_infra_cat, cyber_type) %>%
+  ggplot(aes(x = reorder(crit_infra_cat, n), y = n, fill = cyber_type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("Tactical" = "#D3C3F2", "Strategic" = "#00B399")) +
+  coord_flip() +
+  labs(title = "Cyber Type by Critical Infrastructure Sector",
+       x = "Sector", y = "Count", fill = "Type") +
+  theme_minimal()
+ggsave("03_outputs/figures/exploratory/dv_by_crit_infra.png", width = 8, height = 6)
+
+# 4d. DV by Supply Chain
+cat("\n--- DV x Supply Chain ---\n")
+print(table(dcid$cyber_type, dcid$supply_chain))
+
+# 4e. DV by Ransomware
+cat("\n--- DV x Ransomware ---\n")
+print(table(dcid$cyber_type, dcid$ransomware))
+
+# 4f. DV by Objective Achievement
+cat("\n--- DV x Objective Achievement ---\n")
+print(table(dcid$cyber_type, dcid$obj_achievement))
+
+# 4g. DV by Third Party
+cat("\n--- DV x Third Party ---\n")
+print(table(dcid$cyber_type, dcid$third_party))
+
+# 4h. DV by Concession
+cat("\n--- DV x Concession ---\n")
+print(table(dcid$cyber_type, dcid$concession))
+
+# ============================================================================
+# 5. DESCRIPTIVE STATISTICS TABLE
+# ============================================================================
+
+# Counts and percentages by class for each predictor level
+desc_table <- dcid %>%
+  group_by(cyber_type) %>%
+  summarise(
+    n = n(),
+    method_vandalism      = sum(method_cat == "Vandalism"),
+    method_ddos           = sum(method_cat == "DDoS"),
+    method_intrusion      = sum(method_cat == "Network_Intrusion"),
+    method_infiltration   = sum(method_cat == "Network_Infiltration"),
+    obj_achieved_yes      = sum(obj_achievement == "Yes"),
+    concession_yes        = sum(concession == "Yes"),
+    third_party_yes       = sum(third_party == "Yes"),
+    damage_dir_imm        = sum(damage_type == "Direct_Immediate"),
+    damage_dir_del        = sum(damage_type == "Direct_Delayed"),
+    damage_ind_imm        = sum(damage_type == "Indirect_Immediate"),
+    damage_ind_del        = sum(damage_type == "Indirect_Delayed"),
+    supply_chain_yes      = sum(supply_chain == "Yes"),
+    ransomware_yes        = sum(ransomware == "Yes"),
+    .groups = "drop"
+  )
+
+print(desc_table)
+write_csv(desc_table, "03_outputs/tables/descriptive_stats.csv")
+
+# ============================================================================
+# 6. SPARSE CELL CHECK
+# ============================================================================
+
+cat("\n===== SPARSE CELL CHECK =====\n")
+cat("Variables with very low cell counts may cause modeling issues.\n\n")
+
+cat("Ransomware = Yes:", sum(dcid$ransomware == "Yes"), "out of 429\n")
+cat("Concession = Yes:", sum(dcid$concession == "Yes"), "out of 429\n")
+cat("Damage Indirect/Immediate:", sum(dcid$damage_type == "Indirect_Immediate"), "out of 429\n")
+
+cat("\nCrit Infra sector counts:\n")
+print(sort(table(dcid$crit_infra_cat)))
+
+cat("\nRecommendation: Monitor for quasi-complete separation warnings\n")
+cat("in logistic regression due to rare categories.\n")
+
+cat("\nScript 02 complete.\n")

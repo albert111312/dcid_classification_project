@@ -1,0 +1,112 @@
+# ==============================================================================
+# Script:  05_logistic_regression.R
+# Purpose: Fit logistic regression model, evaluate on test set
+# ==============================================================================
+
+# --- 1. Load train/test data -------------------------------------------------
+
+if (!exists("train_data")) {
+  train_data <- read_csv(file.path(PROCESSED, "dcid_train.csv"), show_col_types = FALSE) %>% reload_factors()
+  test_data  <- read_csv(file.path(PROCESSED, "dcid_test.csv"),  show_col_types = FALSE) %>% reload_factors()
+  cat("Loaded train/test from CSV.\n")
+}
+
+# --- 2. Fit logistic regression -----------------------------------------------
+
+logit_model <- glm(MODEL_FORMULA,
+                   data   = train_data,
+                   family = binomial(link = "logit"))
+
+cat("\n===== LOGISTIC REGRESSION SUMMARY =====\n")
+summary(logit_model)
+
+# Odds ratios with profile-likelihood CIs (more reliable than Wald for sparse
+# predictors). Falls back to Wald CIs if profiling fails (e.g., separation).
+# suppressMessages silences the "Waiting for profiling..." chatter.
+cat("\n--- Odds Ratios ---\n")
+ci <- tryCatch(
+  suppressMessages(confint(logit_model)),
+  error = function(e) {
+    warning("Profile-likelihood CI failed. ",
+            "Falling back to Wald CIs. Original error: ", conditionMessage(e))
+    confint.default(logit_model)
+  }
+)
+or_table <- data.frame(
+  Variable     = names(coef(logit_model)),
+  Coefficient  = coef(logit_model),
+  Odds_Ratio   = exp(coef(logit_model)),
+  CI_Lower     = exp(ci[, 1]),
+  CI_Upper     = exp(ci[, 2]),
+  P_Value      = summary(logit_model)$coefficients[, 4]
+)
+print(or_table, digits = 3)
+write_csv(or_table, file.path(TABLES, "logit_odds_ratios.csv"))
+
+odds <- or_table %>%
+  mutate(across(where(is.numeric), ~round(.x, 3)))
+table_to_png(odds,
+             "Logistic Regression — Odds Ratios",
+             file.path(TABLES, "logit_odds_ratios.png"),
+             col_widths = c(2.5, 1, 1, 1, 1, 1))
+
+# --- 3. Predict on test set ---------------------------------------------------
+
+logit_test_probs <- predict(logit_model, newdata = test_data, type = "response")
+logit_test_pred  <- factor(ifelse(logit_test_probs > 0.5, "Strategic", "Tactical"),
+                     levels = c("Tactical", "Strategic"))
+
+# --- 4. Confusion matrix and metrics -----------------------------------------
+
+cm_logit <- confusionMatrix(logit_test_pred, test_data$cyber_type,
+                             positive = "Strategic")
+
+plot_confusion_matrix(cm_logit, "Logistic Regression",
+                      file.path(TABLES, "cm_logit.png"))
+
+cat("\n===== CONFUSION MATRIX (LOGISTIC REGRESSION) =====\n")
+print(cm_logit)
+
+# --- 5. Variable Importance (absolute z-statistics) -----------------------------
+
+# Extract z-statistics (drop the intercept)
+coef_table <- summary(logit_model)$coefficients[-1, , drop = FALSE]
+vi_logit <- data.frame(
+  Variable   = rownames(coef_table),
+  Z_Absolute = abs(coef_table[, "z value"])
+) %>%
+  arrange(Z_Absolute)
+
+png(file.path(FIG_DIAGNOSTICS, "logit_importance.png"), width = 900, height = 600)
+par(mar = c(5, 14, 4, 2))
+dotchart(vi_logit$Z_Absolute,
+         labels = vi_logit$Variable,
+         pch = 1,
+         main = "Logistic Regression — Variable Importance",
+         xlab = "|z-statistic|")
+dev.off()
+
+# --- 6. ROC and AUC ----------------------------------------------------------
+
+roc_logit <- roc(test_data$cyber_type, logit_test_probs,
+                 levels = c("Tactical", "Strategic"),
+                 direction = "<")
+
+logit_results <- build_results("Logistic Regression", logit_model,
+                               logit_test_pred, logit_test_probs,
+                               cm_logit, roc_logit)
+
+cat(sprintf("\nAUC: %.4f\n", logit_results$auc))
+
+png(file.path(FIG_DIAGNOSTICS, "roc_logit.png"), width = 600, height = 500)
+plot(roc_logit, main = "ROC Curve — Logistic Regression",
+     col = "#2C3E50", lwd = 2, print.auc = TRUE)
+dev.off()
+
+# --- 6. Save model and results -----------------------------------------------
+
+saveRDS(logit_model,   file.path(MODELS, "logit_model.rds"))
+saveRDS(logit_results, file.path(MODELS, "logit_results.rds"))
+
+cat("\nSaved: logit_model.rds, logit_results.rds\n")
+cat("Logistic Regression complete.\n")

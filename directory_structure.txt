@@ -1,0 +1,32 @@
+DCID_Classifaction_Project/
+├── 00_master.R
+├── 01_config.R
+├── DCID_Classifaction_Project.Rproj
+├── README.md
+├── directory_structure.txt
+├── 01_data/
+│   ├── data_dictionary.R
+│   ├── DCID_Variable_Reference.docx
+│   ├── DCID_Variable_Reference.xlsx
+│   ├── 01_raw/
+│   │   ├── DCID 2.0 Codebook_July_2022.pdf
+│   │   ├── DCID 2.0 Codebook_July_2022.txt
+│   │   └── DCID_2.0_Release_update_February_2023.xlsx
+│   └── 02_processed/
+├── 02_code/
+│   ├── 01_data_import_cleaning.R
+│   ├── 02_exploratory_analysis.R
+│   ├── 03_feature_engineering.R
+│   ├── 04_train_test_split.R
+│   ├── 05_logistic_regression.R
+│   ├── 06_decision_tree.R
+│   ├── 07_random_forest.R
+│   └── 08_model_comparison.R
+└── 03_outputs/
+    ├── figures/
+    │   ├── exploratory/
+    │   ├── final_figures/
+    │   │   └── roc_comparison.png
+    │   └── model_diagnostics/
+    ├── models/
+    └── tables/

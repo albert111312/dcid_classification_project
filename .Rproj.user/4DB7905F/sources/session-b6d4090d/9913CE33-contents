@@ -1,0 +1,134 @@
+# ==============================================================================
+# 12_model_comparison_B.R
+# Purpose: Compare all three Option B models, overlaid ROC curves, final summary table
+# ==============================================================================
+
+# --- 1. Load results ----------------------------------------------------------
+
+logit_results_B <- readRDS("03_outputs/models/logit_results_B.rds")
+dtree_results_B <- readRDS("03_outputs/models/dtree_results_B.rds")
+rf_results_B    <- readRDS("03_outputs/models/rf_results_B.rds")
+
+reload_factors_B <- function(df) {
+  df %>% mutate(
+    cyber_type            = factor(cyber_type, levels = c("Tactical", "Strategic")),
+    method_cat            = factor(method_cat),
+    obj_achievement       = factor(obj_achievement),
+    concession            = factor(concession),
+    third_party           = factor(third_party),
+    damage_type_collapsed = factor(damage_type_collapsed),
+    crit_infra_collapsed  = factor(crit_infra_collapsed),
+    supply_chain          = factor(supply_chain),
+    ransomware            = factor(ransomware),
+    target_type             = factor(target_type),
+    cyber_objective         = factor(cyber_objective),
+    cio                     = factor(cio),
+    severity                = as.numeric(severity)
+  )
+}
+
+test_data_B <- read_csv("01_data/02_processed/dcid_test_B.csv", show_col_types = FALSE) %>% reload_factors_B()
+
+# --- 2. Model comparison table ------------------------------------------------
+
+comparison_B <- bind_rows(
+  logit_results_B$metrics,
+  dtree_results_B$metrics,
+  rf_results_B$metrics
+)
+
+cat("\n===== MODEL COMPARISON (OPTION B) =====\n")
+print(comparison_B, digits = 4)
+write_csv(comparison_B, "03_outputs/tables/model_comparison_B.csv")
+
+# --- 3. Overlaid ROC curves ---------------------------------------------------
+
+png("03_outputs/figures/final_figures/roc_comparison_B.png", width = 700, height = 600)
+plot(logit_results_B$roc, col = "#2C3E50", lwd = 2,
+     main = "ROC Curve Comparison — All Three Models (Option B")
+plot(dtree_results_B$roc, col = "#27AE60", lwd = 2, add = TRUE)
+plot(rf_results_B$roc,    col = "#E67E22", lwd = 2, add = TRUE)
+abline(a = 0, b = 1, lty = 2, col = "gray50")
+legend("bottomright",
+       legend = c(
+         sprintf("Logistic Regression (AUC = %.3f)", logit_results_B$auc),
+         sprintf("Decision Tree (AUC = %.3f)", dtree_results_B$auc),
+         sprintf("Random Forest (AUC = %.3f)", rf_results_B$auc)
+       ),
+       col = c("#2C3E50", "#27AE60", "#E67E22"),
+       lwd = 2)
+dev.off()
+
+# --- 4. Confusion matrices side by side ---------------------------------------
+
+cat("\n===== CONFUSION MATRICES (Option B) =====\n")
+
+cat("\n--- Logistic Regression (Option B) ---\n")
+print(logit_results_B$confusion$table)
+
+cat("\n--- Decision Tree (Option B) ---\n")
+print(dtree_results_B$confusion$table)
+
+cat("\n--- Random Forest (Option B) ---\n")
+print(rf_results_B$confusion$table)
+
+# Save confusion matrices
+cm_summary_B <- data.frame(
+  Model = c("Logistic Regression", "Decision Tree", "Random Forest"),
+  TP = c(logit_results_B$confusion$table[2,2],
+         dtree_results_B$confusion$table[2,2],
+         rf_results_B$confusion$table[2,2]),
+  TN = c(logit_results_B$confusion$table[1,1],
+         dtree_results_B$confusion$table[1,1],
+         rf_results_B$confusion$table[1,1]),
+  FP = c(logit_results_B$confusion$table[2,1],
+         dtree_results_B$confusion$table[2,1],
+         rf_results_B$confusion$table[2,1]),
+  FN = c(logit_results_B$confusion$table[1,2],
+         dtree_results_B$confusion$table[1,2],
+         rf_results_B$confusion$table[1,2])
+)
+write_csv(cm_summary_B, "03_outputs/tables/cm_summary_B.csv")
+
+# --- 5. McNemar's test for pairwise model comparison --------------------------
+
+cat("\n===== PAIRWISE MODEL COMPARISONS (McNemar's Test) - OPTION B =====\n")
+
+logit_correct_B <- logit_results_B$predictions == test_data_B$cyber_type
+dtree_correct_B <- dtree_results_B$predictions == test_data_B$cyber_type
+rf_correct_B    <- rf_results_B$predictions    == test_data_B$cyber_type
+
+cat("\n--- Logit vs Decision Tree ---\n")
+mc_ld_B <- table(logit_correct_B, dtree_correct_B)
+print(mc_ld_B)
+tryCatch({
+  print(mcnemar.test(mc_ld_B))
+}, error = function(e) cat("McNemar's test not applicable:", e$message, "\n"))
+
+cat("\n--- Logit vs Random Forest ---\n")
+mc_lr_B <- table(logit_correct_B, rf_correct_B)
+print(mc_lr_B)
+tryCatch({
+  print(mcnemar.test(mc_lr_B))
+}, error = function(e) cat("McNemar's test not applicable:", e$message, "\n"))
+
+cat("\n--- Decision Tree vs Random Forest ---\n")
+mc_dr_B <- table(dtree_correct_B, rf_correct_B)
+print(mc_dr_B)
+tryCatch({
+  print(mcnemar.test(mc_dr_B))
+}, error = function(e) cat("McNemar's test not applicable:", e$message, "\n"))
+
+# --- 6. Best model recommendation --------------------------------------------
+
+best_idx_B <- which.max(comparison$AUC)
+cat(sprintf("\n===== RECOMMENDATION (OPTION B) =====\n"))
+cat(sprintf("Best model by AUC: %s (AUC = %.4f)\n",
+            comparison$Model[best_idx_B], comparison$AUC[best_idx_B]))
+
+best_idx_f1_B <- which.max(comparison$F1)
+cat(sprintf("Best model by F1:  %s (F1 = %.4f)\n",
+            comparison$Model[best_idx_f1_B], comparison$F1[best_idx_f1_B]))
+
+cat("\nOption B model comparison complete.\n")
+cat("All Option B modeling and comparison scripts complete.\n")

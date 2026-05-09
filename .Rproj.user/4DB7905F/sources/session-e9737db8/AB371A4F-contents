@@ -1,0 +1,367 @@
+---
+output:
+  pdf_document:
+    latex_engine: xelatex
+    number_sections: false
+    fig_caption: yes
+
+bibliography: project_references.bib
+csl: apa.csl
+link-citations: true
+
+fontsize: 12pt
+mainfont: "Times New Roman"
+geometry: margin=1in
+
+header-includes:
+  - \usepackage{setspace}
+  - \doublespacing
+  - \usepackage{ragged2e}
+  - \usepackage{indentfirst}
+  - \usepackage{xurl}
+  - \usepackage{etoolbox}
+  - \usepackage{float}
+  - \RaggedRight
+  - \setlength{\parindent}{0.5in}
+  - \setlength{\RaggedRightParindent}{0.5in}
+  - \setlength{\parskip}{0pt}
+  - \urlstyle{same}
+  - \hyphenpenalty=10000
+  - \exhyphenpenalty=10000
+  - \usepackage{caption}
+  - \captionsetup{labelformat=empty}
+---
+\thispagestyle{empty}
+
+\begin{center}
+\vspace*{2in}
+
+\textbf{Classifying Cyber Conflict:} \\
+
+\textbf{Strategic vs. Tactical State-Sponsored Cyber Operations} \\
+
+Albert G. Elam, III \\
+
+Schar School of Policy and Government \\
+
+George Mason University \\
+
+POGO 750: Big Data Analytics for Policy and Government \\
+
+Dr. Laurie Schintler \\
+
+May 11, 2026
+
+\end{center}
+
+\newpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+# Concept Description and Background
+
+State-sponsored cyber operations have emerged as a defining feature of modern international competition. Nations increasingly employ cyber capabilities not just as isolated technical acts but as instruments of statecraft targeting rival governments, critical infrastructure, and private-sector entities. Cyber operations are a tool to achieve foreign policy objectives ranging from intelligence collection to political coercion to infrastructure disruption [@valerianoCyberStrategy2018]. Yet not all state-sponsored cyber activity serves the same purpose. Some operations advance political goals, such as degrading a rival's military capabilities, manipulating elections, or conducting long-term espionage against government networks. Others resemble ordinary criminal behavior, like ransomware campaigns against hospitals, financially motivated intrusions into private firms, or opportunistic disruption of commercial services [@lavorgnaUnpackingPoliticalcriminalNexus2023]. The distinction between strategic and tactical cyber activity matters because it carries direct implications for threat assessment, policy response, and escalation management. A state-sponsored intrusion into a defense contractor's classified network signals fundamentally different intentions than a state-linked ransomware attack on a municipal government, even though both are technically cyber incidents attributable to nation-state actors. Misclassifying a strategic operation as routine criminal activity risks underestimating a rival's political ambitions and misclassifying tactical activity as a strategic provocation risks unnecessary escalation. As General Paul Nakasone, then-Commander of U.S. Cyber Command, emphasized, the strategic significance of cyber capabilities lies not in their mere possession but in their use. Understanding the purpose behind that use is essential for calibrating an appropriate response [@Eliason2019InterviewNakasone]. Therefore, this study seeks to address the classification problem and determine whether supervised machine learning methods can reliably distinguish between these two categories of state-sponsored cyber activity using observable incident characteristics.
+
+# Research Objectives
+
+This study employs supervised machine learning classification because classification models are designed to learn patterns in labeled data and predict category membership rather than to test directional relationships between independent and dependent variables; therefore, conventional hypotheses are not used. [@hastieElementsStatisticalLearning2009]. Instead, this study is organized around three research objectives. The first is to determine whether observable characteristics of state-sponsored cyber incidents can reliably classify incidents as strategic cyber operations or tactical cyber activity. The second objective is to compare the predictive performance of three classification methods in distinguishing between these two categories. The third objective is to identify which incident characteristics contribute most to the classification, thereby offering insight into the observable features that differentiate politically motivated strategic operations from criminal-like tactical activity in state-sponsored cyberspace behavior.
+
+These objectives are drawn from the cyber conflict literature which theorizes that strategic and tactical cyber activity differ in systematic and observable ways beyond the variables used to define them. Valeriano, Jensen, and Maness argue that cyber operations reflect deliberate coercive strategies with distinct operational signatures, while Lavorgna contends that the boundary between state-political and state-criminal cyber behavior is increasingly blurred yet distinguishable [@valerianoCyberStrategy2018; @lavorgnaUnpackingPoliticalcriminalNexus2023]. If the classification models achieve predictive accuracy meaningfully above the 50% baseline expected from random guessing, this would suggest that the strategic-tactical distinction is not merely a conceptual typology but a pattern recoverable from the empirical features of cyber incidents.
+
+# Description of Data
+
+This study uses the Dyadic Cyber Incident and Campaign Dataset (DCID) version 2.0 developed by Valeriano, Jensen, and Maness [@Maness2022DCID2]. It is a peer-reviewed dataset recording state-sponsored cyber incidents between nation-state dyads from 2000 to 2021. The dataset contains 429 observations, each representing a distinct cyber incident, and codes variables capturing the method of attack, target characteristics, coercive objectives, severity, and outcomes of each incident. Key analysis variables have zero missing values across the full dataset.
+
+The DCID does not classify incidents as strategic or tactical, a requirement for the dependent variable. Therefore, this study creates the dependent variable as a binary classification of each cyber incident as either strategic or tactical. Strategic cyber operations are defined as incidents intended to advance a nation's political objectives through sustained or high-impact cyber activity directed at state-level targets. Tactical cyber activity refers to state-sponsored cyber incidents that resemble criminal cyber behavior in their methods, targets, or objectives. This classification is operationalized using a composite indicator rule created from four variables included in the DCID. An incident is classified as strategic if it meets two or more of the following criteria:
+
+1. **`Severity`** ≥ 4 on the DCID severity scale, corresponding to incidents involving critical network infiltration with attempted or actual destruction of capabilities [@valerianoCyberStrategy2018].
+2. **`Cyber_objective`** equal to 3 (long-term espionage) or 4 (degradation). This reflects operations designed to manipulate a target's decision calculus over time or to physically damage capabilities, as opposed to low-cost disruption or short-term information gathering [@valerianoCyberStrategy2018].
+3. **`Target_type`** equal to 2 or 3, meaning the target is government non-military or government military, rather than private or non-state entities. Targeting state infrastructure suggests strategic intent beyond opportunistic exploitation [@peterTypologyStateActors2024].
+4. **`CIO`** equal to 1,  meaning cyber-enabled information operation (CIO) is present and indicating the incident involved deliberate manipulation of information to communicate a message or influence a targeted population, consistent with strategic information warfare objectives [@Eliason2019InterviewNakasone].
+
+Incidents meeting fewer than two criteria are classified as tactical. Requiring two or more indicators ensures that no single variable drives the classification.
+
+This operationalization produces a near-balanced class distribution with 221 incidents (51.5%) classified as strategic and 208 (48.5%) as tactical (see figure 1). The distribution of indicator counts revealed that 138 incidents met zero or one strategic indicator and were classified as tactical, while 291 met two or more and were classified as strategic (see figure 2). This near-balanced split is favorable for classification modeling because it reduces the risk of models defaulting to a majority-class prediction and eliminates the need for resampling. The classification was validated against known benchmark cases. Well-documented strategic operations such as Stuxnet, SUNBURST (SolarWinds), the Sony Pictures hack, NotPetya, and WannaCry are all correctly classified as strategic. Established tactical-pattern incidents such as Operation Ababil (distributed denial of service (DDoS) attacks on U.S. financial institutions), the GitHub DDoS attack, and the Yahoo breach are correctly classified as tactical.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figures/01_dv_distribution.png}
+\caption{Figure 1.}
+\label{fig:fig1}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figures/02_indicator_count.png}
+\caption{Figure 2.}
+\label{fig:fig2}
+\end{figure}
+
+Eight predictor variables are included in the classification models. The four variables used to construct the dependent variable, **`severity`**, **`cyber_objective`**, **`target_type`**, and **`CIO`**, are excluded from the predictor set to avoid data leakage. Including these variables as predictors would result in the models learning the composite coding rule rather than discovering meaningful patterns among other incident characteristics. The following eight predictors capture distinct dimensions of each cyber incident:
+
+- **`Method`** is a four-level categorical variable indicating the primary attack technique used; vandalism (website defacement, propaganda), denial of service (DDoS, botnets), network intrusion (Trojans, spear-phishing, backdoors), or network infiltration (logic bombs, viruses, worms, keystroke logging). The original DCID coding includes subcategories which are collapsed into the main categories to avoid sparse cells.
+
+- **`Objective_achievement`** is a binary variable indicating whether the incident breached its target and fulfilled its purpose. This variable is skewed, with 86% of incidents achieving their objective.
+
+- **`Concession`** is a binary variable indicating whether the targeted state conceded to the initiator as a result of the incident. This is a rare outcome, occurring in only 12 of 429 incidents (2.8%).
+
+- **`Third_party`** is a binary variable indicating whether another state, rebel group, or corporation was involved in initiating the incident.
+
+- **`Damage_type`** captures the timing and directness of the incident's impact. The original four-level variable (direct/immediate, direct/delayed, indirect/immediate, indirect/delayed) is collapsed to three levels by merging the two indirect categories into a single "indirect" level, as indirect/immediate contains only three observations.
+
+- **`Critical_infrastructure`** classifies the targeted sector into three theoretically motivated categories based on sector function rather than arbitrary count-based thresholds. Government and defense sectors (Government Facilities, Defense Industrial Base, Nuclear Reactors/Materials/Waste; n = 211) represent state and military infrastructure where targeting suggests strategic intent. Civilian infrastructure sectors (Communications, Energy, Healthcare, Transportation, Chemical, Critical Manufacturing, Dams, Water/Wastewater; n = 90) represent essential services where disruption affects the population but may resemble criminal opportunism. Commercial sectors (Commercial Facilities, Financial Services, Information Technology, Other including election infrastructure and academia; n = 128) represent private-sector or mixed targets most consistent with tactical, criminal-like behavior patterns [@lavorgnaUnpackingPoliticalcriminalNexus2023]. This grouping produces a clear strategic gradient with 64.5% of government/defense incidents being strategic, compared to 41.1% of civilian infrastructure and 37.5% of commercial sector incidents.
+
+- **`Supply_chain`** is a binary variable indicating whether a supply chain breach was present.
+
+- **`Ransomware`** is a binary variable indicating whether the target was locked out of data access for ransom by a state actor. This is rare, occurring in only 11 of 429 incidents (2.6%), and serves as a theoretical indicator of criminal-like behavior.
+
+Cross-tabulations between the aforementioned predictor variables and the dependent variable reveal varying degrees of bivariate association and can be seen in the figures in Appendix A.
+
+# Methodology
+
+Three supervised classification methods are used to distinguish between strategic and tactical cyber incidents. Logistic regression serves as the baseline model. It models the log-odds of an incident being strategic as a linear function of the eight predictor variables. The model is fit using maximum likelihood estimation via the generalized linear model function and serves as the baseline model [@hosmerAppliedLogisticRegression2013]. The estimated coefficients can be exponentiated to produce odds ratios, indicating the direction and magnitude of each predictor's association with the probability of strategic classification.
+
+The second classification method is the decision tree model. A classification decision tree is fit using recursive partitioning where the algorithm iteratively splits the data on the predictor that most reduces impurity, measured by the Gini index, at each node. For this study, an initial complex tree is grown with a low complexity parameter of 0.001 so the tree keeps splitting as long as a split improves the overall model fit by at least 0.1%. The minimum split size is set to 10 observations, preventing the tree from creating splits based on tiny groups whose patterns are likely to be noise. The tree is pruned using the one standard error (1-SE) rule which identifies the simplest tree whose cross-validated error falls within one standard error of the minimum [@breimanIntroductionTreeClassification2017; @hothornUnbiasedRecursivePartitioning2006].
+
+The third classification method is random forest. It constructs a set number of classification trees each trained on a bootstrap sample of the training data using a random subset of predictors at each split. The final classification is determined by majority vote across all trees. The number of predictors randomly sampled at each split, known as mtry, is tuned by evaluating the out-of-bag (OOB) error rate for every possible value up to the total number of predictors. The value that minimizes OOB error is selected for the final model [@breimanRandomForests2001; hastieElementsStatisticalLearning2009].
+
+These classification models require training and testing data to evaluate their prediction of strategic versus tactical cyber activity. Therefore, the dataset is split into a training set that includes 70\% of the observations (n = 301) and a test set that includes the remaining 30\% (n = 128). The split uses a stratified random sampling to preserve the class proportions of the dependent variable in both subsets.
+
+The models are evaluated using the following six metrics.
+
+1. **Accuracy** is the proportion of test set incidents correctly classified.
+
+2. **Precision** is the proportion of incidents classified as strategic that are actually strategic. 
+
+3. **Recall**, also called sensitivity, is the proportion of actual strategic incidents that the model correctly identifies. 
+
+4. **F1 score** is the harmonic mean of precision and recall. It is useful when neither false positives nor false negatives are clearly more costly than the other.
+
+5. **Area Under the Curve (AUC)**, measures the area under the receiver operating characteristic (ROC) curve which equates to the model's ability to discriminate between strategic and tactical incidents across all possible classification thresholds.
+
+6. **McNemar's test** is used for pairwise comparison of model performance. It examines the specific incidents where two models disagree and determines whether one model gets significantly more of those disagreement cases correct [@dietterichApproximateStatisticalTests1998].
+
+# Results
+
+Table 1 presents the performance metrics for all three models side by side. (Individual model results are present in Appendix B.) The decision tree achieved the highest accuracy (68.0%), precision (67.6%), recall (72.7%), and F1 score among the three methods, meaning it was most effective at identifying actual strategic operations, though the advantage is modest. Logistic regression and random forest performed identically on accuracy (66.4%) and similarly on all other metrics. The differences across all three models were small, with accuracy spanning a range of only 1.6 percentage points and recall spanning 3.0 percentage points.
+
+\begin{table}[H]
+\centering
+\includegraphics[width=\textwidth]{tables/01_model_comparison.png}
+\caption{Table 1.}
+\label{tab:tab1}
+\end{table}
+
+The ROC curves for all three models are overlaid in Figure 3. All three curves follow a similar trajectory, rising steeply in the lower-left region before flattening. The decision tree curve sits slightly above the other two across most threshold values, consistent with its higher AUC. All three models achieved AUC values above 0.5, confirming discriminatory ability beyond random chance, though none approached the high-performance thresholds (AUC > 0.80) typical of well-separated classification problems [@florkowskiSensitivitySpecificityReceiveroperating2008; @hosmerAppliedLogisticRegression2013].
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/03_roc_comparison.png}
+\caption{Figure 3.}
+\label{fig:fig3}
+\end{figure}
+
+Pairwise McNemar's tests were conducted to determine whether the models made significantly different classification errors on the same test observations. None of the three pairwise comparisons reached statistical significance (see table 2). These results indicate that while the decision tree achieved modestly higher estimates on all metrics, the differences in classification behavior across the three models are not statistically distinguishable. This finding suggests that the choice of classification method matters less than the underlying signal strength in the data for this set of predictors.
+
+\begin{table}[H]
+\centering
+\includegraphics[width=\textwidth]{tables/02_mcnemar_results.png}
+\caption{Table 2.}
+\label{tab:tab2}
+\end{table}
+
+Across all three models, critical infrastructure sector and method of interaction (primary attack technique) emerged as the most important predictors (see figures 4, 5, and 6). Government and defense sector targeting was the strongest indicator of strategic classification, while commercial sector targeting was most associated with tactical classification. Network infiltration methods skewed strategic, and denial-of-service methods skewed tactical. These findings align with the theoretical expectations that strategic cyber operations tend to target state infrastructure using sophisticated intrusion techniques, while tactical activity resembles criminal patterns in its targeting of private-sector and financial entities through less resource-intensive methods [@peterTypologyStateActors2024; @valerianoCyberStrategy2018]. Objective achievement, damage type, and third-party involvement contributed moderate predictive value, while concession, ransomware, and supply chain showed limited discriminatory power.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/04_logit_importance.png}
+\caption{Figure 4.}
+\label{fig:fig4}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/05_dtree_importance.png}
+\caption{Figure 5.}
+\label{fig:fig5}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/06_rf_importance.png}
+\caption{Figure 6.}
+\label{fig:fig6}
+\end{figure}
+
+The similar performance across the models shows that the relationship between the predictors and the dependent variable is relatively straightforward and complex methods do not uncover substantially more information or relationships than simpler approaches. The results confirm that the eight predictor variables carry meaningful information about the strategic-tactical distinction because all three models achieved accuracies substantially above the 50% baseline expected from random guessing. The classification is not perfect, with roughly one-third of incidents misclassified across all models. However, the above-baseline performance indicates that strategic cyber operations and tactical cyber activity differ in systematic, observable ways beyond the four primary indicators used to create the dependent variable. The false positive rate of approximately 18% across all models suggests that a meaningful subset of tactical incidents share operational characteristics with strategic operations confirming the idea that the boundary between state-political and state-criminal cyber behavior is blurred [@lavorgnaUnpackingPoliticalcriminalNexus2023].
+
+# Caveats
+
+Several limitations should be considered. First, the two-or-more threshold of the researcher-constructed dependent variable, while grounded in the academic literature and validated against benchmark cases, is an analytical choice, and alternative operationalizations could produce different class assignments. Second, the DCID contains 429 observations, yielding a training set of 301 cases, a modest sample for classification modeling which may contribute to the moderate accuracy levels observed. Third, the dataset is limited to publicly reported and attributed incidents, introducing potential selection bias as covert or undisclosed operations are absent, and included incidents may skew toward higher-profile or more attributable cases. Finally, several predictor variables, namely concession, ransomware, and indirect/immediate damage, have low occurrences, limiting their ability to contribute to classification.
+
+Future research could extend this work in several directions. Incorporating the unstructured political objective text field through natural language processing techniques could capture strategic intent signals that the current structured predictors miss. Applying k-fold cross-validation on the training set, rather than relying solely on a single train-test split, would provide more robust estimates of model performance and reduce sensitivity to the particular random partition [@kohaviCV1995; @hastieElementsStatisticalLearning2009]. Updating the DCID with more current incidents and merging with comparable datasets, such as the European Repository of Cyber Incidents (EuRepoC) or the Council on Foreign Relations (CFR) Cyber Operations Tracker, would create a larger sample and replicating on this larger dataset could test the generalizability of these findings. Also different analytical techniques could be evaluated alongside the three methods used here to uncover different relationships between cyber activity. Most importantly, external validation using an independently coded dataset would strengthen confidence that the strategic-tactical distinction identified in this study reflects genuine empirical patterns rather than artifacts of a single dataset's coding conventions.
+
+# Code & Reproducibility
+
+All analyses are conducted in R (version 4.x) using RStudio. Key packages include *tidyverse*, *readxl*, *caret*, *rpart*, *rpart.plot*, *randomForest*, and *pROC*. All scripts can be found at [INSERT GITHUB LINK TO PROJECT].
+
+\newpage
+\section*{\centering References}
+
+<div id="refs"></div>
+
+\newpage
+# Appendix A. Exploratory Analysis
+
+The below figures show the distribution of strategic and tactical cyber incidents per predictor.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/07_dv_by_method.png}
+\caption{Figure 7.}
+\label{fig:fig7}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/08_dv_by_obj_achievement.png}
+\caption{Figure 8.}
+\label{fig:fig8}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/09_dv_by_concession.png}
+\caption{Figure 9.}
+\label{fig:fig9}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/10_dv_by_third_party.png}
+\caption{Figure 10.}
+\label{fig:fig10}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/11_dv_by_damage.png}
+\caption{Figure 11.}
+\label{fig:fig11}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/12_dv_by_crit_infra.png}
+\caption{Figure 12.}
+\label{fig:fig12}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/13_dv_by_supply_chain.png}
+\caption{Figure 13.}
+\label{fig:fig13}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/14_dv_by_ransomware.png}
+\caption{Figure 14.}
+\label{fig:fig14}
+\end{figure}
+
+\newpage
+# Appendix B. Classification Model Results
+## Logistic Regression
+
+The logistic regression model correctly classified 85 of 128 test set incidents, yielding an overall accuracy of 66.4%. Precision for the strategic class was 66.7%, meaning that roughly two-thirds of incidents the model labeled as strategic were in fact strategic. Recall was 69.7%, indicating the model captured approximately 70% of actual strategic operations. The F1 score was 0.681, and the AUC was 0.677 (see figure 15 and table 3). Among the predictors, the DDoS method category, network intrusion method category, objective achievement, indirect damage type, and government infrastructure were statistically significant (see table 4). The model showed no convergence warnings, though the sparse categories of concession (n = 12) and ransomware (n = 11) produced wide confidence intervals on their respective odds ratios.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/15_roc_logit.png}
+\caption{Figure 15.}
+\label{fig:fig15}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\includegraphics[width=0.5\textwidth]{tables/03_cm_logit.png}
+\caption{Table 3.}
+\label{tab:tab3}
+\end{table}
+
+\begin{table}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{tables/04_logit_odds_ratios.png}
+\caption{Table 4.}
+\label{tab:tab4}
+\end{table}
+
+## Decision Tree
+
+The full decision tree was grown with a minimum complexity parameter of 0.001, then pruned using the one standard error (1-SE) rule. The pruned tree selected a complexity parameter of 0.00685 producing an 8-split tree. The decision tree achieved the highest accuracy among the three models at 68.0%, correctly classifying 87 of 128 test set incidents (see table 5) Precision was 67.6% and recall was 72.7%, yielding an F1 score of 0.701 and an AUC of 0.712 (see figure 16. The tree's recall advantage over the other models indicates that it was somewhat better at detecting actual strategic operations while maintaining a comparable false alarm rate.
+
+Variable importance scores from the pruned tree, measured by mean decrease in Gini impurity, identified critical infrastructure sector, method category, and damage type as the most influential predictors in determining split points (see figure 17). The tree visualization shows the set of decision rules making up the classification logic (see figure 18). The root node splits on critical infrastructure sector, classifying government/defense incidents as strategic and routing others to subsequent splits based on method of interaction.
+
+\begin{table}[H]
+\centering
+\includegraphics[width=0.5\textwidth]{tables/05_cm_dtree.png}
+\caption{Table 5.}
+\label{tab:tab5}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/16_roc_dtree.png}
+\caption{Figure 16.}
+\label{fig:fig16}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/17_dtree_importance.png}
+\caption{Figure 17.}
+\label{fig:fig17}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figures/18_decision_tree.png}
+\caption{Figure 18}
+\label{fig:fig18}
+\end{figure}
+
+## Random Forest
+
+The random forest model was tuned by evaluating all eight possible values of mtry, the number of predictors randomly sampled at each split. The optimal mtry was 3, producing a minimum out-of-bag error rate of 31.23% (see figure 19). With 500 trees and the tuned mtry, the random forest achieved an accuracy of 66.4%, matching logistic regression. Precision was 66.2% and recall was 71.2%, yielding an F1 score of 0.691 and an AUC of 0.0718 (see table 6 and figure 20).
+
+Variable importance analysis, measured by both mean decrease in accuracy (how much classification accuracy drops when a predictor's values are randomly permuted) and mean decrease in Gini impurity, identified critical infrastructure sector and method  as the most influential predictors. Critical infrastructure sector and method (primary attack technique) ranked highest on both measures, consistent with the strong bivariate associations observed in the exploratory analysis. Ransomware ranked lowest, reflecting its limited variability in the dataset. (See figure 21.)
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/19_rf_oob_error.png}
+\caption{Figure 19}
+\label{fig:fig19}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\includegraphics[width=0.5\textwidth]{tables/06_cm_rf.png}
+\caption{Table 6.}
+\label{tab:tab6}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/20_roc_rf.png}
+\caption{Figure 20}
+\label{fig:fig20}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/21_rf_importance.png}
+\caption{Figure 21}
+\label{fig:fig21}
+\end{figure}

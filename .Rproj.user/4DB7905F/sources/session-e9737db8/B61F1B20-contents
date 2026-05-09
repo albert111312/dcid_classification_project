@@ -1,0 +1,249 @@
+# ==============================================================================
+# config.R
+# Global parameters, paths, settings, and functions for DCID Classification Project
+# ==============================================================================
+
+# --- Paths -------------------------------------------------------------------
+# All filesystem paths in the pipeline are anchored to ROOT so the scripts run
+# correctly regardless of the working directory.
+
+ROOT    <- here::here()
+CODE    <- file.path(ROOT, "02_code")
+DATA    <- file.path(ROOT, "01_data")
+OUTPUTS <- file.path(ROOT, "03_outputs")
+
+PROCESSED       <- file.path(DATA, "02_processed")
+TABLES          <- file.path(OUTPUTS, "tables")
+MODELS          <- file.path(OUTPUTS, "models")
+FIG_EXPLORATORY <- file.path(OUTPUTS, "figures", "exploratory")
+FIG_DIAGNOSTICS <- file.path(OUTPUTS, "figures", "model_diagnostics")
+FIG_FINAL       <- file.path(OUTPUTS, "figures", "final_figures")
+
+RAW_XLSX        <- file.path(DATA, "01_raw", "DCID_2.0_Release_update_February_2023.xlsx")
+CLEANED_RDS     <- file.path(PROCESSED, "dcid_cleaned.rds")
+CLEANED_CSV     <- file.path(PROCESSED, "dcid_cleaned.csv")
+
+# Ensure output + processed subdirectories exist
+for (d in c(PROCESSED, TABLES, MODELS,
+            FIG_EXPLORATORY, FIG_DIAGNOSTICS, FIG_FINAL)) {
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+}
+
+# --- Packages ---
+required_packages <- c(
+  "tidyverse", "caret", "pROC", "readxl", "rpart",
+  "rpart.plot", "here", "randomForest", "ggplot2"
+)
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+# --- Set options ---
+options(scipen = 999)
+theme_set(theme_minimal())
+
+# --- Shared factor reload helpers --------------------------------------------
+# Used by scripts 04–08 when re-loading the train/test CSVs in a fresh R
+# session (factor levels don't survive a CSV round-trip). The full dcid is
+# saved as RDS, so scripts 02–03 don't need this.
+#
+# Levels are pinned explicitly so that train/test factors always have the
+# same set of levels even if a sparse category happens to be missing from
+# either split.
+
+# --- Modeling formula --------------------------------------------------------
+# All three classifiers share the same 8 predictors and DV.
+PREDICTORS <- c("method_cat", "obj_achievement", "concession", "third_party",
+                "damage_type_collapsed", "crit_infra_collapsed",
+                "supply_chain", "ransomware")
+MODEL_FORMULA <- reformulate(PREDICTORS, response = "cyber_type")
+
+# --- Factor levels -----------------------------------------------------------
+
+LEVELS_METHOD_CAT            <- c("Vandalism", "DDoS", "Network_Intrusion", "Network_Infiltration")
+LEVELS_BINARY_NO_YES         <- c("No", "Yes")
+LEVELS_DAMAGE_TYPE           <- c("Direct_Immediate", "Direct_Delayed", "Indirect_Immediate", "Indirect_Delayed")
+LEVELS_DAMAGE_COLLAPSED      <- c("Direct_Immediate", "Direct_Delayed", "Indirect")
+LEVELS_CRIT_INFRA_COLLAPSED  <- c("Commercial", "Civilian_Infra", "Govt_Defense")
+LEVELS_TARGET_TYPE           <- c("Private", "Govt_NonMil", "Govt_Military")
+LEVELS_CYBER_OBJECTIVE       <- c("Disruption", "ST_Espionage", "LT_Espionage", "Degradation")
+LEVELS_CIO                   <- c("Absent", "Present")
+LEVELS_CYBER_TYPE            <- c("Tactical", "Strategic")
+
+# Re-apply factor levels to whichever columns happen to be present in `df`.
+# Works for the full dcid (script 02), feature-engineered data (03), the
+# train/test pair (04–08), and any subset thereof. Columns absent from `df`
+# are silently skipped.
+FACTOR_SPECS <- list(
+  cyber_type            = list(levels = LEVELS_CYBER_TYPE),
+  method_cat            = list(levels = LEVELS_METHOD_CAT),
+  obj_achievement       = list(levels = LEVELS_BINARY_NO_YES),
+  concession            = list(levels = LEVELS_BINARY_NO_YES),
+  third_party           = list(levels = LEVELS_BINARY_NO_YES),
+  damage_type           = list(levels = LEVELS_DAMAGE_TYPE),
+  damage_type_collapsed = list(levels = LEVELS_DAMAGE_COLLAPSED),
+  crit_infra_collapsed  = list(levels = LEVELS_CRIT_INFRA_COLLAPSED),
+  supply_chain          = list(levels = LEVELS_BINARY_NO_YES),
+  ransomware            = list(levels = LEVELS_BINARY_NO_YES),
+  target_type           = list(levels = LEVELS_TARGET_TYPE),
+  cyber_objective       = list(levels = LEVELS_CYBER_OBJECTIVE),
+  cio                   = list(levels = LEVELS_CIO),
+  severity              = list(levels = 0:10, ordered = TRUE)
+)
+
+reload_factors <- function(df) {
+  for (col in intersect(names(FACTOR_SPECS), names(df))) {
+    spec <- FACTOR_SPECS[[col]]
+    df[[col]] <- factor(df[[col]],
+                        levels  = spec$levels,
+                        ordered = isTRUE(spec$ordered))
+  }
+  # crit_infra_cat: 11+ sector strings; accept whatever levels are in the data.
+  if ("crit_infra_cat" %in% names(df)) {
+    df[["crit_infra_cat"]] <- factor(df[["crit_infra_cat"]])
+  }
+  df
+}
+
+# --- Function: factor() that fails loudly on unmapped values ----------------
+# Same semantics as factor() but raises an error if any non-NA input value
+# falls outside the supplied levels. Use this when building factors from
+# fixed-coded variables (e.g., binary 0/1) so a stray code becomes a stop()
+# rather than a silent NA propagating into the DV.
+
+factor_strict <- function(x, levels, labels = levels, name = "factor",
+                          ordered = FALSE) {
+  result <- factor(x, levels = levels, labels = labels, ordered = ordered)
+  introduced <- !is.na(x) & is.na(result)
+  if (any(introduced)) {
+    bad <- unique(x[introduced])
+    stop(sprintf("Unmapped %s value(s): %s. Expected: %s",
+                 name,
+                 paste(bad, collapse = ", "),
+                 paste(levels, collapse = ", ")))
+  }
+  result
+}
+
+# --- Function: Bundle a fitted model + test-set evaluation into a results list
+
+build_results <- function(model_name, model, predictions, probs, cm, roc_obj, ...) {
+  auc_val <- as.numeric(auc(roc_obj))
+  c(
+    list(
+      model       = model,
+      predictions = predictions,
+      probs       = probs,
+      confusion   = cm,
+      roc         = roc_obj,
+      auc         = auc_val,
+      metrics     = data.frame(
+        Model     = model_name,
+        Accuracy  = cm$overall["Accuracy"],
+        Precision = cm$byClass["Precision"],
+        Recall    = cm$byClass["Recall"],
+        F1        = cm$byClass["F1"],
+        AUC       = auc_val
+      )
+    ),
+    list(...)
+  )
+}
+
+# --- Function: Save a formatted confusion matrix as PNG ----------------------
+
+plot_confusion_matrix <- function(cm, model_name, filename) {
+  # cm = output from confusionMatrix()
+  # model_name = string for the title
+  # filename = path to save PNG
+  
+  cm_table <- as.data.frame(cm$table)
+  names(cm_table) <- c("Predicted", "Actual", "Count")
+  
+  # Add labels inside each cell: count and percentage
+  total <- sum(cm_table$Count)
+  cm_table$Label <- sprintf("%d\n(%.1f%%)", cm_table$Count, cm_table$Count / total * 100)
+  
+  # Color: correct predictions green, errors red
+  cm_table$Correct <- cm_table$Predicted == cm_table$Actual
+  
+  p <- ggplot(cm_table, aes(x = Actual, y = Predicted, fill = Correct)) +
+    geom_tile(color = "white", linewidth = 1.5) +
+    geom_text(aes(label = Label), size = 6, fontface = "bold", color = "white") +
+    scale_fill_manual(values = c("TRUE" = "#2C3E50", "FALSE" = "#E74C3C"),
+                      guide = "none") +
+    labs(title = paste("Confusion Matrix —", model_name),
+         subtitle = sprintf("Accuracy: %.1f%%  |  F1: %.3f",
+                            cm$overall["Accuracy"] * 100, cm$byClass["F1"]),
+         x = "Actual", y = "Predicted") +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title    = element_text(face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(hjust = 0.5, color = "gray40"),
+      axis.text     = element_text(size = 13, face = "bold"),
+      panel.grid    = element_blank()
+    )
+  
+  ggsave(filename, p, width = 6, height = 5, dpi = 300)
+  cat("Saved:", filename, "\n")
+}
+
+
+# --- Function: Render a dataframe as a formatted PNG table -------------------
+
+table_to_png <- function(df, title, filename, col_widths = NULL) {
+  # Convert everything to character for pivot
+  col_names <- names(df)
+  col_labels <- gsub("_", " ", col_names)  # Clean up underscores for display
+  
+  n_cols <- length(col_names)
+  
+  # Default equal widths if not specified
+  if (is.null(col_widths)) {
+    col_widths <- rep(1, n_cols)
+  }
+  col_centers <- cumsum(col_widths) - col_widths / 2
+  
+  # Header
+  header <- data.frame(
+    col   = col_centers,
+    label = col_labels,
+    width = col_widths,
+    row   = 0
+  )
+  
+  # Body
+  body <- df %>%
+    mutate(row_num = row_number()) %>%
+    mutate(across(everything(), as.character)) %>%
+    pivot_longer(cols = all_of(col_names), names_to = "col_name", values_to = "value") %>%
+    mutate(
+      col_idx = match(col_name, col_names),
+      col     = col_centers[col_idx],
+      width   = col_widths[col_idx],
+      row_num = as.numeric(row_num)
+    )
+  
+  p <- ggplot() +
+    geom_tile(data = header, aes(x = col, y = row, width = width),
+              fill = "#2C3E50", color = "white", height = 1) +
+    geom_text(data = header, aes(x = col, y = row, label = label),
+              color = "white", fontface = "bold", size = 3.8, lineheight = 0.9) +
+    geom_tile(data = body, aes(x = col, y = -row_num, width = width),
+              fill = ifelse(body$row_num %% 2 == 0, "#F2F6FA", "white"),
+              color = "gray80", height = 1) +
+    geom_text(data = body, aes(x = col, y = -row_num, label = value), size = 3.5) +
+    scale_y_continuous(expand = expansion(add = 0.5)) +
+    labs(title = title) +
+    theme_void(base_size = 13) +
+    theme(
+      plot.title  = element_text(face = "bold", hjust = 0.5,
+                                 margin = ggplot2::margin(b = 10)),
+      plot.margin = ggplot2::margin(20, 20, 20, 20)
+    )
+  
+  # Calculate dimensions based on table size
+  fig_width  <- sum(col_widths) * 1.3 + 1
+  fig_height <- (nrow(df) + 1) * 0.6 + 1
+  
+  ggsave(filename, p, width = fig_width, height = fig_height, dpi = 300)
+  cat("Saved:", filename, "\n")
+}

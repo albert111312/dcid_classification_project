@@ -1,0 +1,126 @@
+# ==============================================================================
+# 06_decision_tree_A.R
+# Purpose: Fit decision tree model, prune, evaluate on test set
+# ==============================================================================
+
+# --- 1. Load train/test data -------------------------------------------------
+
+reload_factors_A <- function(df) {
+  df %>% mutate(
+    cyber_type            = factor(cyber_type, levels = c("Tactical", "Strategic")),
+    method_cat            = factor(method_cat),
+    obj_achievement       = factor(obj_achievement),
+    concession            = factor(concession),
+    third_party           = factor(third_party),
+    damage_type_collapsed = factor(damage_type_collapsed),
+    crit_infra_collapsed  = factor(crit_infra_collapsed),
+    supply_chain          = factor(supply_chain),
+    ransomware            = factor(ransomware)
+  )
+}
+
+if (!exists("train_data_A")) {
+  train_data_A <- read_csv("01_data/processed/dcid_train_A.csv", show_col_types = FALSE) %>% reload_factors_A()
+  test_data_A  <- read_csv("01_data/processed/dcid_test_A.csv",  show_col_types = FALSE) %>% reload_factors_A()
+  cat("Loaded train/test from CSV.\n")
+}
+
+# --- 2. Fit full decision tree ------------------------------------------------
+
+dtree_full_A <- rpart(cyber_type ~ method_cat + obj_achievement + concession +
+                      third_party + damage_type_collapsed + crit_infra_collapsed +
+                      supply_chain + ransomware,
+                    data = train_data_A,
+                    method = "class",
+                    control = rpart.control(cp = 0.001, minsplit = 10))
+
+cat("\n===== FULL TREE =====\n")
+print(dtree_full_A)
+printcp(dtree_full_A)
+
+# --- 3. Prune tree using 1-SE rule -------------------------------------------
+
+# Find the cp value with the lowest cross-validated error
+cp_table_A <- dtree_full_A$cptable
+best_cp_A  <- cp_table_A[which.min(cp_table_A[, "xerror"]), "CP"]
+
+# 1-SE rule: smallest tree within 1 SE of the minimum error
+min_xerror_A <- min(cp_table_A[, "xerror"])
+min_xstd_A   <- cp_table_A[which.min(cp_table_A[, "xerror"]), "xstd"]
+cp_1se_A     <- cp_table_A[cp_table_A[, "xerror"] <= min_xerror_A + min_xstd_A, "CP"]
+cp_1se_A     <- max(cp_1se_A)  # Largest cp (simplest tree) within 1 SE
+
+cat(sprintf("\nBest cp (min error): %.5f\n", best_cp_A))
+cat(sprintf("1-SE rule cp:        %.5f\n", cp_1se_A))
+
+dtree_pruned_A_A <- prune(dtree_full_A, cp = cp_1se_A)
+
+cat("\n===== PRUNED TREE (OPTION A) =====\n")
+print(dtree_pruned_A)
+
+# --- 4. Visualize tree --------------------------------------------------------
+
+png("03_outputs/figures/model_diagnostics/decision_tree_A.png", width = 900, height = 600)
+rpart.plot(dtree_pruned_A,
+           type = 4,
+           extra = 104,
+           fallen.leaves = TRUE,
+           main = "Decision Tree — Strategic vs. Tactical Cyber Activity",
+           box.palette = c("#E74C3C", "#2C3E50"))
+dev.off()
+
+# Variable importance
+cat("\n--- Variable Importance ---\n")
+vi_dtree_A <- dtree_pruned_A$variable.importance
+print(sort(vi_dtree_A, decreasing = TRUE))
+
+# --- 5. Predict on test set ---------------------------------------------------
+
+test_probs_dtree_A <- predict(dtree_pruned_A, newdata = test_data_A, type = "prob")[, "Strategic"]
+test_pred_dtree_A  <- predict(dtree_pruned_A, newdata = test_data_A, type = "class")
+
+# --- 6. Confusion matrix and metrics -----------------------------------------
+
+cm_dtree_A <- confusionMatrix(test_pred_dtree_A, test_data_A$cyber_type,
+                             positive = "Strategic")
+
+cat("\n===== CONFUSION MATRIX =====\n")
+print(cm_dtree_A)
+
+# --- 7. ROC and AUC ----------------------------------------------------------
+
+roc_dtree_A <- roc(test_data_A$cyber_type, test_probs_dtree_A,
+                 levels = c("Tactical", "Strategic"),
+                 direction = "<")
+
+cat(sprintf("\nAUC: %.4f\n", auc(roc_dtree_A)))
+
+png("03_outputs/figures/model_diagnostics/roc_dtree_A.png", width = 600, height = 500)
+plot(roc_dtree_A, main = "ROC Curve — Decision Tree (OPTION A",
+     col = "#27AE60", lwd = 2, print.auc = TRUE)
+dev.off()
+
+# --- 8. Save ------------------------------------------------------------------
+
+saveRDS(dtree_pruned_A, "03_outputs/models/dtree_model_A.rds")
+
+dtree_results_A <- list(
+  model       = dtree_pruned_A,
+  predictions = test_pred_dtree_A,
+  probs       = test_probs_dtree_A,
+  confusion   = cm_dtree_A,
+  roc         = roc_dtree_A,
+  auc         = as.numeric(auc(roc_dtree_A)),
+  metrics     = data.frame(
+    Model     = "Decision Tree",
+    Accuracy  = cm_dtree_A$overall["Accuracy"],
+    Precision = cm_dtree_A$byClass["Precision"],
+    Recall    = cm_dtree_A$byClass["Recall"],
+    F1        = cm_dtree_A$byClass["F1"],
+    AUC       = as.numeric(auc(roc_dtree_A))
+  )
+)
+saveRDS(dtree_results_A, "03_outputs/models/dtree_results_A.rds")
+
+cat("\nSaved: dtree_model.rds, dtree_results_A.rds\n")
+cat("Decision Tree (Option A) complete.\n")

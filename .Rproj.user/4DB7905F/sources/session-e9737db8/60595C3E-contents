@@ -1,0 +1,158 @@
+# ==============================================================================
+# config.R
+# Global parameters, paths, and settings for DCID Classification Project
+# ==============================================================================
+
+# --- Paths ---
+ROOT <- here::here()
+CODE <- file.path(ROOT, "02_code")
+DATA <- file.path(ROOT, "01_data")
+OUTPUTS <- file.path(ROOT, "03_outputs")
+
+# Ensure output subdirectories exist
+for (d in c("figures/exploratory", "figures/model_diagnostics",
+            "figures/final_figures", "tables", "models")) {
+  dir.create(file.path(OUTPUTS, d), recursive = TRUE, showWarnings = FALSE)
+}
+
+# --- Packages ---
+required_packages <- c(
+  "tidyverse", "caret", "pROC", "readxl", "rpart",
+  "rpart.plot", "here", "randomForest", "ggplot2"
+)
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+# --- Set options ---
+options(scipen = 999)
+theme_set(theme_minimal())
+
+# --- Shared factor reload helpers --------------------------------------------
+# Used by every modeling script when re-loading train/test CSVs in a fresh R
+# session (factor levels don't survive a CSV round-trip).
+#
+# Levels are pinned explicitly so that train/test factors always have the
+# same set of levels even if a sparse category happens to be missing from
+# either split.
+
+LEVELS_METHOD_CAT            <- c("Vandalism", "DDoS", "Network_Intrusion", "Network_Infiltration")
+LEVELS_BINARY_NO_YES         <- c("No", "Yes")
+LEVELS_DAMAGE_COLLAPSED      <- c("Direct_Immediate", "Direct_Delayed", "Indirect")
+LEVELS_CRIT_INFRA_COLLAPSED  <- c("Commercial", "Civilian_Infra", "Govt_Defense")
+LEVELS_TARGET_TYPE           <- c("Private", "Govt_NonMil", "Govt_Military")
+LEVELS_CYBER_OBJECTIVE       <- c("Disruption", "ST_Espionage", "LT_Espionage", "Degradation")
+LEVELS_CIO                   <- c("Absent", "Present")
+LEVELS_CYBER_TYPE            <- c("Tactical", "Strategic")
+
+reload_factors <- function(df) {
+  df %>% mutate(
+    cyber_type            = factor(cyber_type,            levels = LEVELS_CYBER_TYPE),
+    method_cat            = factor(method_cat,            levels = LEVELS_METHOD_CAT),
+    obj_achievement       = factor(obj_achievement,       levels = LEVELS_BINARY_NO_YES),
+    concession            = factor(concession,            levels = LEVELS_BINARY_NO_YES),
+    third_party           = factor(third_party,           levels = LEVELS_BINARY_NO_YES),
+    damage_type_collapsed = factor(damage_type_collapsed, levels = LEVELS_DAMAGE_COLLAPSED),
+    crit_infra_collapsed  = factor(crit_infra_collapsed,  levels = LEVELS_CRIT_INFRA_COLLAPSED),
+    supply_chain          = factor(supply_chain,          levels = LEVELS_BINARY_NO_YES),
+    ransomware            = factor(ransomware,            levels = LEVELS_BINARY_NO_YES)
+  )
+}
+
+# --- Function: Save a formatted confusion matrix as PNG ----------------------
+
+plot_confusion_matrix <- function(cm, model_name, filename) {
+  # cm = output from confusionMatrix()
+  # model_name = string for the title
+  # filename = path to save PNG
+  
+  cm_table <- as.data.frame(cm$table)
+  names(cm_table) <- c("Predicted", "Actual", "Count")
+  
+  # Add labels inside each cell: count and percentage
+  total <- sum(cm_table$Count)
+  cm_table$Label <- sprintf("%d\n(%.1f%%)", cm_table$Count, cm_table$Count / total * 100)
+  
+  # Color: correct predictions green, errors red
+  cm_table$Correct <- cm_table$Predicted == cm_table$Actual
+  
+  p <- ggplot(cm_table, aes(x = Actual, y = Predicted, fill = Correct)) +
+    geom_tile(color = "white", linewidth = 1.5) +
+    geom_text(aes(label = Label), size = 6, fontface = "bold", color = "white") +
+    scale_fill_manual(values = c("TRUE" = "#2C3E50", "FALSE" = "#E74C3C"),
+                      guide = "none") +
+    labs(title = paste("Confusion Matrix —", model_name),
+         subtitle = sprintf("Accuracy: %.1f%%  |  F1: %.3f  |  AUC: reported separately",
+                            cm$overall["Accuracy"] * 100, cm$byClass["F1"]),
+         x = "Actual", y = "Predicted") +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title    = element_text(face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(hjust = 0.5, color = "gray40"),
+      axis.text     = element_text(size = 13, face = "bold"),
+      panel.grid    = element_blank()
+    )
+  
+  ggsave(filename, p, width = 6, height = 5, dpi = 300)
+  cat("Saved:", filename, "\n")
+}
+
+
+# --- Function: Render a dataframe as a formatted PNG table -------------------
+
+table_to_png <- function(df, title, filename, col_widths = NULL) {
+  # Convert everything to character for pivot
+  col_names <- names(df)
+  col_labels <- gsub("_", " ", col_names)  # Clean up underscores for display
+  
+  n_cols <- length(col_names)
+  
+  # Default equal widths if not specified
+  if (is.null(col_widths)) {
+    col_widths <- rep(1, n_cols)
+  }
+  col_centers <- cumsum(col_widths) - col_widths / 2
+  
+  # Header
+  header <- data.frame(
+    col   = col_centers,
+    label = col_labels,
+    width = col_widths,
+    row   = 0
+  )
+  
+  # Body
+  body <- df %>%
+    mutate(row_num = row_number()) %>%
+    mutate(across(everything(), as.character)) %>%
+    pivot_longer(cols = all_of(col_names), names_to = "col_name", values_to = "value") %>%
+    mutate(
+      col_idx = match(col_name, col_names),
+      col     = col_centers[col_idx],
+      width   = col_widths[col_idx],
+      row_num = as.numeric(row_num)
+    )
+  
+  p <- ggplot() +
+    geom_tile(data = header, aes(x = col, y = row, width = width),
+              fill = "#2C3E50", color = "white", height = 1) +
+    geom_text(data = header, aes(x = col, y = row, label = label),
+              color = "white", fontface = "bold", size = 3.8, lineheight = 0.9) +
+    geom_tile(data = body, aes(x = col, y = -row_num, width = width),
+              fill = ifelse(body$row_num %% 2 == 0, "#F2F6FA", "white"),
+              color = "gray80", height = 1) +
+    geom_text(data = body, aes(x = col, y = -row_num, label = value), size = 3.5) +
+    scale_y_continuous(expand = expansion(add = 0.5)) +
+    labs(title = title) +
+    theme_void(base_size = 13) +
+    theme(
+      plot.title  = element_text(face = "bold", hjust = 0.5,
+                                 margin = ggplot2::margin(b = 10)),
+      plot.margin = ggplot2::margin(20, 20, 20, 20)
+    )
+  
+  # Calculate dimensions based on table size
+  fig_width  <- sum(col_widths) * 1.3 + 1
+  fig_height <- (nrow(df) + 1) * 0.6 + 1
+  
+  ggsave(filename, p, width = fig_width, height = fig_height, dpi = 300)
+  cat("Saved:", filename, "\n")
+}

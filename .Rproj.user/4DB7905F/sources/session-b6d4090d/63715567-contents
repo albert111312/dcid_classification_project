@@ -1,0 +1,132 @@
+# ==============================================================================
+# 03_feature_engineering.R
+# Purpose: Collapse sparse categories and produce modeling-ready dataset
+# ==============================================================================
+
+# --- 1. Load cleaned data (if necessary) -----------------------------------------------------
+# Note: If starting a new session, reload from CSV and re-apply factors:
+
+if (!exists("dcid")) {
+  dcid <- read_csv("01_data/processed/dcid_cleaned.csv", show_col_types = FALSE) %>%
+    mutate(
+      method_cat      = factor(method_cat),
+      target_type     = factor(target_type),
+      cyber_objective = factor(cyber_objective),
+      cio             = factor(cio),
+      obj_achievement = factor(obj_achievement),
+      concession      = factor(concession),
+      third_party     = factor(third_party),
+      supply_chain    = factor(supply_chain),
+      ransomware      = factor(ransomware),
+      damage_type     = factor(damage_type),
+      crit_infra_cat  = factor(crit_infra_cat),
+      severity        = factor(severity, ordered = TRUE),
+      cyber_type      = factor(cyber_type, levels = c("Tactical", "Strategic"))
+    )
+  cat("Loaded dcid from CSV. Rows:", nrow(dcid), "\n")
+}
+
+# --- 2. Recode critical infrastructure into sector types ----------------------
+#
+# Rather than collapsing by cell count (arbitrary), group the 17 CISA sectors
+# into 3 theoretically motivated categories based on sector function:
+#
+#   GOVT_DEFENSE (n=211): Government Facilities, Defense Industrial Base, Nuclear
+#     - State/military infrastructure; targeting suggests strategic intent
+#
+#   CIVILIAN_INFRA (n=90): Chemical, Communications, Critical Manufacturing,
+#     Dams, Energy, Healthcare, Transportation, Water/Wastewater
+#     - Essential services; disruption affects population but may resemble
+#       criminal opportunism (e.g., ransomware on hospitals)
+#
+#   COMMERCIAL (n=128): Commercial Facilities, Financial Services,
+#     Information Technology, Other/Elections/Academia
+#     - Private-sector or mixed targets; most consistent with tactical/
+#       criminal-like behavior patterns (Lavorgna 2023)
+#
+# This grouping produces a clear strategic gradient:
+#   Govt_Defense   = 64.5% strategic
+#   Civilian_Infra = 41.1% strategic
+#   Commercial     = 37.5% strategic
+
+cat("Original crit_infra_cat distribution:\n")
+print(sort(table(dcid$crit_infra_cat)))
+
+dcid <- dcid %>%
+  mutate(
+    crit_infra_collapsed = case_when(
+      # Government / Defense / Military
+      crit_infra_cat %in% c("Govt_Facilities", "Defense", "Nuclear")
+      ~ "Govt_Defense",
+      # Civilian essential infrastructure
+      crit_infra_cat %in% c("Communications", "Energy", "Healthcare",
+                            "Transportation", "Other")
+      ~ "Civilian_Infra",
+      # Commercial / Private sector / Mixed
+      crit_infra_cat %in% c("Commercial_Facilities", "Financial",
+                            "Info_Technology", "Other_NonTraditional")
+      ~ "Commercial",
+      # Catch-all for any remaining (should not occur)
+      TRUE ~ "Commercial"
+    ),
+    crit_infra_collapsed = factor(crit_infra_collapsed,
+                                  levels = c("Commercial", "Civilian_Infra", "Govt_Defense"))
+  )
+
+cat("\nSector-type grouping distribution:\n")
+print(table(dcid$crit_infra_collapsed))
+cat("\nSector-type by DV:\n")
+print(table(dcid$crit_infra_collapsed, dcid$cyber_type))
+
+# --- 3. Collapse rare damage type categories ----------------------------------
+# Indirect_Immediate has only 3 observations. Combine with Indirect_Delayed.
+
+dcid <- dcid %>%
+  mutate(
+    damage_type_collapsed = fct_collapse(damage_type,
+                                         Indirect = c("Indirect_Immediate", "Indirect_Delayed")
+    )
+  )
+
+cat("\nCollapsed damage_type distribution:\n")
+print(table(dcid$damage_type_collapsed))
+
+# --- 4. Build final modeling dataset ------------------------------------------
+
+model_data <- dcid %>%
+  select(
+    # DV
+    cyber_type,
+    # Predictors
+    method_cat,
+    obj_achievement,
+    concession,
+    third_party,
+    damage_type_collapsed,
+    crit_infra_collapsed,
+    supply_chain,
+    ransomware,
+    # Keep ID for reference (will drop before modeling)
+    incident_num
+  )
+
+cat("\nFinal modeling dataset structure:\n")
+str(model_data)
+
+# --- 5. Check for remaining issues -------------------------------------------
+
+cat("\nMissing values:\n")
+print(colSums(is.na(model_data)))
+
+cat("\nAll factor levels:\n")
+model_data %>%
+  select(where(is.factor)) %>%
+  sapply(levels) %>%
+  print()
+
+# --- 6. Save ------------------------------------------------------------------
+
+write_csv(model_data, "01_data/02_processed/dcid_model_ready.csv")
+
+cat("\nSaved: 01_data/02_processed/dcid_model_ready.csv\n")
+cat("Script 03 complete.\n")

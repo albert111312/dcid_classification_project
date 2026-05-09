@@ -1,0 +1,102 @@
+# ==============================================================================
+# Script:  05_logistic_regression_A.R
+# Purpose: Fit logistic regression model, evaluate on test set
+# ==============================================================================
+
+# --- 1. Load train/test data -------------------------------------------------
+
+reload_factors_A <- function(df) {
+  df %>% mutate(
+    cyber_type            = factor(cyber_type, levels = c("Tactical", "Strategic")),
+    method_cat            = factor(method_cat),
+    obj_achievement       = factor(obj_achievement),
+    concession            = factor(concession),
+    third_party           = factor(third_party),
+    damage_type_collapsed = factor(damage_type_collapsed),
+    crit_infra_collapsed  = factor(crit_infra_collapsed),
+    supply_chain          = factor(supply_chain),
+    ransomware            = factor(ransomware)
+  )
+}
+
+if (!exists("train_data")) {
+  train_data <- read_csv("01_data/processed/dcid_train.csv", show_col_types = FALSE) %>% reload_factors_A()
+  test_data  <- read_csv("01_data/processed/dcid_test.csv",  show_col_types = FALSE) %>% reload_factors_A()
+  cat("Loaded train/test from CSV.\n")
+}
+
+# --- 2. Fit logistic regression -----------------------------------------------
+
+logit_model_A <- glm(cyber_type ~ method_cat + obj_achievement + concession +
+                     third_party + damage_type_collapsed + crit_infra_collapsed +
+                     supply_chain + ransomware,
+                   data = train_data_A,
+                   family = binomial(link = "logit"))
+
+cat("\n===== LOGISTIC REGRESSION SUMMARY (OPTION A) =====\n")
+summary(logit_model_A)
+
+# Odds ratios
+cat("\n--- Odds Ratios ---\n")
+or_table_A <- data.frame(
+  Variable     = names(coef(logit_model_A)),
+  Coefficient  = coef(logit_model_A),
+  Odds_Ratio   = exp(coef(logit_model_A)),
+  CI_Lower     = exp(confint.default(logit_model_A)[, 1]),
+  CI_Upper     = exp(confint.default(logit_model_A)[, 2]),
+  P_Value      = summary(logit_model_A)$coefficients[, 4]
+)
+print(or_table_A, digits = 3)
+write_csv(or_table_A, "03_outputs/logit_odds_ratios_A.csv")
+
+# --- 3. Predict on test set ---------------------------------------------------
+
+logit_test_probs_A <- predict(logit_model_A, newdata = test_data, type = "response")
+logit_test_pred_A  <- factor(ifelse(logit_test_probs_A > 0.5, "Strategic", "Tactical"),
+                     levels = c("Tactical", "Strategic"))
+
+# --- 4. Confusion matrix and metrics -----------------------------------------
+
+cm_logit_A <- confusionMatrix(logit_test_pred_A, test_data$cyber_type,
+                             positive = "Strategic")
+
+cat("\n===== CONFUSION MATRIX (LOGISTIC REGRESION - OPTION A) =====\n")
+print(cm_logit_A)
+
+# --- 5. ROC and AUC ----------------------------------------------------------
+
+roc_logit_A <- roc(test_data$cyber_type, logit_test_probs_A,
+                 levels = c("Tactical", "Strategic"),
+                 direction = "<")
+
+cat(sprintf("\nAUC: %.4f\n", auc(roc_logit_A)))
+
+png("03_outputs/figures/model_diagnostics/roc_logit_A.png", width = 600, height = 500)
+plot(roc_logit_A, main = "ROC Curve — Logistic Regression (Option A)",
+     col = "#2C3E50", lwd = 2, print.auc = TRUE)
+dev.off()
+
+# --- 6. Save model and results -----------------------------------------------
+
+saveRDS(logit_model_A, "03_outputs/models/logit_model_A.rds")
+
+logit_results_A <- list(
+  model       = logit_model_A,
+  predictions = logit_test_pred_A,
+  probs       = logit_test_probs_A,
+  confusion   = cm_logit_A,
+  roc         = roc_logit_A,
+  auc         = as.numeric(auc(roc_logit_A)),
+  metrics     = data.frame(
+    Model     = "Logistic Regression (Option A",
+    Accuracy  = cm_logit_A$overall["Accuracy"],
+    Precision = cm_logit_A$byClass["Precision"],
+    Recall    = cm_logit_A$byClass["Recall"],
+    F1        = cm_logit_A$byClass["F1"],
+    AUC       = as.numeric(auc(roc_logit_A))
+  )
+)
+saveRDS(logit_results_A, "03_outputs/models/logit_results_A.rds")
+
+cat("\nSaved: logit_model_A.rds, logit_results_A.rds\n")
+cat("Logistic Regression (Option A) complete.\n")

@@ -1,0 +1,114 @@
+# ==============================================================================
+# config.R
+# Global parameters, paths, and settings for DCID Classification Project
+# ==============================================================================
+
+# --- Paths ---
+ROOT <- here::here()
+CODE <- file.path(ROOT, "02_code")
+DATA <- file.path(ROOT, "01_data")
+OUTPUTS <- file.path(ROOT, "03_outputs")
+
+# Ensure output subdirectories exist
+for (d in c("figures/exploratory", "figures/model_diagnostics",
+            "figures/final_figures", "tables", "models")) {
+  dir.create(file.path(OUTPUTS, d), recursive = TRUE, showWarnings = FALSE)
+}
+
+# --- Packages ---
+required_packages <- c(
+  "tidyverse", "caret", "pROC", "readxl", "rpart",
+  "rpart.plot", "here", "randomForest", "ggplot2"
+)
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+# --- Set options ---
+options(scipen = 999)
+theme_set(theme_minimal())
+
+# --- Shared factor reload helpers --------------------------------------------
+# Used by every modeling script when re-loading train/test CSVs in a fresh R
+# session (factor levels don't survive a CSV round-trip).
+#
+# Levels are pinned explicitly so that train/test factors always have the
+# same set of levels even if a sparse category happens to be missing from
+# either split.
+
+LEVELS_METHOD_CAT            <- c("Vandalism", "DDoS", "Network_Intrusion", "Network_Infiltration")
+LEVELS_BINARY_NO_YES         <- c("No", "Yes")
+LEVELS_DAMAGE_COLLAPSED      <- c("Direct_Immediate", "Direct_Delayed", "Indirect")
+LEVELS_CRIT_INFRA_COLLAPSED  <- c("Commercial", "Civilian_Infra", "Govt_Defense")
+LEVELS_TARGET_TYPE           <- c("Private", "Govt_NonMil", "Govt_Military")
+LEVELS_CYBER_OBJECTIVE       <- c("Disruption", "ST_Espionage", "LT_Espionage", "Degradation")
+LEVELS_CIO                   <- c("Absent", "Present")
+LEVELS_CYBER_TYPE            <- c("Tactical", "Strategic")
+
+reload_factors_A <- function(df) {
+  df %>% mutate(
+    cyber_type            = factor(cyber_type,            levels = LEVELS_CYBER_TYPE),
+    method_cat            = factor(method_cat,            levels = LEVELS_METHOD_CAT),
+    obj_achievement       = factor(obj_achievement,       levels = LEVELS_BINARY_NO_YES),
+    concession            = factor(concession,            levels = LEVELS_BINARY_NO_YES),
+    third_party           = factor(third_party,           levels = LEVELS_BINARY_NO_YES),
+    damage_type_collapsed = factor(damage_type_collapsed, levels = LEVELS_DAMAGE_COLLAPSED),
+    crit_infra_collapsed  = factor(crit_infra_collapsed,  levels = LEVELS_CRIT_INFRA_COLLAPSED),
+    supply_chain          = factor(supply_chain,          levels = LEVELS_BINARY_NO_YES),
+    ransomware            = factor(ransomware,            levels = LEVELS_BINARY_NO_YES)
+  )
+}
+
+reload_factors_B <- function(df) {
+  df %>% mutate(
+    cyber_type            = factor(cyber_type,            levels = LEVELS_CYBER_TYPE),
+    method_cat            = factor(method_cat,            levels = LEVELS_METHOD_CAT),
+    obj_achievement       = factor(obj_achievement,       levels = LEVELS_BINARY_NO_YES),
+    concession            = factor(concession,            levels = LEVELS_BINARY_NO_YES),
+    third_party           = factor(third_party,           levels = LEVELS_BINARY_NO_YES),
+    damage_type_collapsed = factor(damage_type_collapsed, levels = LEVELS_DAMAGE_COLLAPSED),
+    crit_infra_collapsed  = factor(crit_infra_collapsed,  levels = LEVELS_CRIT_INFRA_COLLAPSED),
+    supply_chain          = factor(supply_chain,          levels = LEVELS_BINARY_NO_YES),
+    ransomware            = factor(ransomware,            levels = LEVELS_BINARY_NO_YES),
+    target_type           = factor(target_type,           levels = LEVELS_TARGET_TYPE),
+    cyber_objective       = factor(cyber_objective,       levels = LEVELS_CYBER_OBJECTIVE),
+    cio                   = factor(cio,                   levels = LEVELS_CIO),
+    severity              = as.numeric(severity)
+  )
+}
+
+# --- Function: Save a formatted confusion matrix as PNG ----------------------
+
+plot_confusion_matrix <- function(cm, model_name, filename) {
+  # cm = output from confusionMatrix()
+  # model_name = string for the title
+  # filename = path to save PNG
+  
+  cm_table <- as.data.frame(cm$table)
+  names(cm_table) <- c("Predicted", "Actual", "Count")
+  
+  # Add labels inside each cell: count and percentage
+  total <- sum(cm_table$Count)
+  cm_table$Label <- sprintf("%d\n(%.1f%%)", cm_table$Count, cm_table$Count / total * 100)
+  
+  # Color: correct predictions green, errors red
+  cm_table$Correct <- cm_table$Predicted == cm_table$Actual
+  
+  p <- ggplot(cm_table, aes(x = Actual, y = Predicted, fill = Correct)) +
+    geom_tile(color = "white", linewidth = 1.5) +
+    geom_text(aes(label = Label), size = 6, fontface = "bold", color = "white") +
+    scale_fill_manual(values = c("TRUE" = "#2C3E50", "FALSE" = "#E74C3C"),
+                      guide = "none") +
+    labs(title = paste("Confusion Matrix —", model_name),
+         subtitle = sprintf("Accuracy: %.1f%%  |  F1: %.3f  |  AUC: reported separately",
+                            cm$overall["Accuracy"] * 100, cm$byClass["F1"]),
+         x = "Actual", y = "Predicted") +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title    = element_text(face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(hjust = 0.5, color = "gray40"),
+      axis.text     = element_text(size = 13, face = "bold"),
+      panel.grid    = element_blank()
+    )
+  
+  ggsave(filename, p, width = 6, height = 5, dpi = 300)
+  cat("Saved:", filename, "\n")
+}

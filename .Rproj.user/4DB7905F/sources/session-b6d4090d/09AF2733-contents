@@ -1,0 +1,108 @@
+# ==============================================================================
+# 04_train_test_split.R
+# Purpose: Stratified 70/30 train-test split with class proportion verification
+# ==============================================================================
+
+# --- 1. Load modeling-ready data ----------------------------------------------
+
+if (!exists("model_data_A")) {
+  model_data_A <- read_csv("01_data/02_processed/dcid_model_ready_A.csv", show_col_types = FALSE) %>%
+    mutate(
+      cyber_type              = factor(cyber_type, levels = c("Tactical", "Strategic")),
+      method_cat              = factor(method_cat),
+      obj_achievement         = factor(obj_achievement),
+      concession              = factor(concession),
+      third_party             = factor(third_party),
+      damage_type_collapsed   = factor(damage_type_collapsed),
+      crit_infra_collapsed    = factor(crit_infra_collapsed),
+      supply_chain            = factor(supply_chain),
+      ransomware              = factor(ransomware)
+    )
+  cat("Loaded model_data_A from CSV. Rows:", nrow(model_data_A), "\n")
+}
+
+if (!exists("model_data_B")) {
+  model_data_A <- read_csv("01_data/02_processed/dcid_model_ready_B.csv", show_col_types = FALSE) %>%
+    mutate(
+      cyber_type              = factor(cyber_type, levels = c("Tactical", "Strategic")),
+      method_cat              = factor(method_cat),
+      obj_achievement         = factor(obj_achievement),
+      concession              = factor(concession),
+      third_party             = factor(third_party),
+      damage_type_collapsed   = factor(damage_type_collapsed),
+      crit_infra_collapsed    = factor(crit_infra_collapsed),
+      supply_chain            = factor(supply_chain),
+      ransomware              = factor(ransomware),
+      target_type             = factor(target_type),
+      cyber_objective         = factor(cyber_objective),
+      cio                     = factor(cio),
+      severity                = as.numeric(severity),
+    )
+  cat("Loaded model_data_B from CSV. Rows:", nrow(model_data_B), "\n")
+}
+
+# --- 2. Set seed and create stratified split ----------------------------------
+
+set.seed(42)  # For reproducibility
+
+# Option A
+train_index_A <- createDataPartition(model_data_A$cyber_type,
+                                    p = 0.70,
+                                    list = FALSE,
+                                    times = 1)
+
+## Drop the incident_num ID column before splitting
+model_data_A_clean <- model_data_A %>% select(-incident_num)
+
+train_data_A <- model_data_A_clean[train_index_A, ]
+test_data_A  <- model_data_A_clean[-train_index_A, ]
+
+# Option B
+train_index_B <- createDataPartition(model_data_b$cyber_type,
+                                     p = 0.70,
+                                     list = FALSE,
+                                     times = 1)
+
+## Drop the incident_num ID column before splitting
+model_data_B_clean <- model_data_B %>% select(-incident_num)
+
+train_data_B <- model_data_B[train_index_B, ]
+test_data_B  <- model_data_B[-train_index_B, ]
+
+# --- 3. Verify class proportions ---------------------------------------------
+
+cat("\n===== SPLIT VERIFICATION (OPTION A) =====\n")
+cat(sprintf("\nFull data:   n = %d\n", nrow(model_data_A_clean)))
+print(prop.table(table(model_data_A_clean$cyber_type)))
+
+cat(sprintf("\nTraining:    n = %d (%.1f%%)\n",
+            nrow(train_data_A), nrow(train_data_A)/nrow(model_data_A_clean)*100))
+print(prop.table(table(train_data_A$cyber_type)))
+
+cat(sprintf("\nTest:        n = %d (%.1f%%)\n",
+            nrow(test_data_A), nrow(test_data_A)/nrow(model_data_A_clean)*100))
+print(prop.table(table(test_data_A$cyber_type)))
+
+cat("\n===== SPLIT VERIFICATION (OPTION B) =====\n")
+cat(sprintf("\nFull data:   n = %d\n", nrow(model_data_B_clean)))
+print(prop.table(table(model_data_B_clean$cyber_type)))
+
+cat(sprintf("\nTraining:    n = %d (%.1f%%)\n",
+            nrow(train_data_B), nrow(train_data_B)/nrow(model_data_B_clean)*100))
+print(prop.table(table(train_data_B$cyber_type)))
+
+cat(sprintf("\nTest:        n = %d (%.1f%%)\n",
+            nrow(test_data_B), nrow(test_data_B)/nrow(model_data_B_clean)*100))
+print(prop.table(table(test_data_B$cyber_type)))
+
+# --- 4. Save ------------------------------------------------------------------
+
+write_csv(train_data_A, "01_data/02_02_processed/dcid_train_A.csv")
+write_csv(test_data_A,  "01_data/02_02_processed/dcid_test_A.csv")
+cat("\nSaved: dcid_train_A.csv, dcid_test_A.csv\n")
+
+write_csv(train_data_B, "01_data/02_02_processed/dcid_train_B.csv")
+write_csv(test_data_B,  "01_data/02_02_processed/dcid_test_B.csv")
+cat("\nSaved: dcid_train_B.csv, dcid_test_B.csv\n")
+
+cat("Training and testing data ready.\n")

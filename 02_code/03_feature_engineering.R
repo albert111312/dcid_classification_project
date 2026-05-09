@@ -1,0 +1,126 @@
+# ==============================================================================
+# 03_feature_engineering.R
+# Purpose: Collapse sparse categories and produce modeling-ready dataset
+# ==============================================================================
+
+# --- 1. Load cleaned data (if necessary) -------------------------------------
+# In a fresh R session, reload from the RDS cache produced by script 01.
+
+if (!exists("dcid")) {
+  dcid <- readRDS(CLEANED_RDS)
+  cat("Loaded dcid from RDS. Rows:", nrow(dcid), "\n")
+}
+
+# --- 2. Recode critical infrastructure into sector types ----------------------
+#
+# Rather than collapsing by cell count (arbitrary), group the 17 CISA sectors
+# into 3 theoretically motivated categories based on sector function:
+#
+#   GOVT_DEFENSE (n=211): Government Facilities, Defense Industrial Base, Nuclear
+#     - State/military infrastructure; targeting suggests strategic intent
+#
+#   CIVILIAN_INFRA (n=90): Chemical, Communications, Critical Manufacturing,
+#     Dams, Energy, Healthcare, Transportation, Water/Wastewater
+#     - Essential services; disruption affects population but may resemble
+#       criminal opportunism (e.g., ransomware on hospitals)
+#
+#   COMMERCIAL (n=128): Commercial Facilities, Financial Services,
+#     Information Technology, Other/Elections/Academia
+#     - Private-sector or mixed targets; most consistent with tactical/
+#       criminal-like behavior patterns (Lavorgna 2023)
+#
+# This grouping produces a clear strategic gradient:
+#   Govt_Defense   = 64.5% strategic
+#   Civilian_Infra = 41.1% strategic
+#   Commercial     = 37.5% strategic
+
+cat("Original crit_infra_cat distribution:\n")
+print(sort(table(dcid$crit_infra_cat)))
+
+dcid <- dcid %>%
+  mutate(
+    crit_infra_collapsed = case_when(
+      # Government / Defense / Military
+      crit_infra_cat %in% c("Govt_Facilities", "Defense", "Nuclear")
+      ~ "Govt_Defense",
+      # Civilian essential infrastructure
+      crit_infra_cat %in% c("Communications", "Energy", "Healthcare",
+                            "Transportation", "Other")
+      ~ "Civilian_Infra",
+      # Commercial / Private sector / Mixed
+      crit_infra_cat %in% c("Commercial_Facilities", "Financial",
+                            "Info_Technology", "Other_NonTraditional")
+      ~ "Commercial",
+      # Anything else -> NA so the check below catches it loudly
+      TRUE ~ NA_character_
+    ),
+    crit_infra_collapsed = factor(crit_infra_collapsed,
+                                  levels = c("Commercial", "Civilian_Infra", "Govt_Defense"))
+  )
+
+unmapped <- dcid %>%
+  filter(is.na(crit_infra_collapsed)) %>%
+  pull(crit_infra_cat) %>%
+  unique() %>%
+  as.character()
+if (length(unmapped) > 0) {
+  stop("Unmapped crit_infra_cat values: ", paste(unmapped, collapse = ", "),
+       ". Update the case_when() in 03_feature_engineering.R.")
+}
+
+cat("\nSector-type grouping distribution:\n")
+print(table(dcid$crit_infra_collapsed))
+cat("\nSector-type by DV:\n")
+print(table(dcid$crit_infra_collapsed, dcid$cyber_type))
+
+# --- 3. Collapse rare damage type categories ----------------------------------
+# Indirect_Immediate has only 3 observations. Combine with Indirect_Delayed.
+
+dcid <- dcid %>%
+  mutate(
+    damage_type_collapsed = fct_collapse(damage_type,
+                                         Indirect = c("Indirect_Immediate", "Indirect_Delayed")
+    )
+  )
+
+cat("\nCollapsed damage_type distribution:\n")
+print(table(dcid$damage_type_collapsed))
+
+# --- 4. Build modeling datasets ------------------------------------------
+model_data <- dcid %>%
+  select(
+    # DV
+    cyber_type,
+    # Predictors
+    method_cat,
+    obj_achievement,
+    concession,
+    third_party,
+    damage_type_collapsed,
+    crit_infra_collapsed,
+    supply_chain,
+    ransomware,
+    # Keep ID for reference (will drop before modeling)
+    incident_num
+  )
+
+cat("\nFinal modeling dataset structure\n")
+str(model_data)
+
+# --- 5. Check for remaining issues -------------------------------------------
+
+cat("\nMissing values:\n")
+print(colSums(is.na(model_data)))
+
+cat("\nAll factor levels:\n")
+model_data %>%
+  select(where(is.factor)) %>%
+  sapply(levels) %>%
+  print()
+
+# --- 6. Save ------------------------------------------------------------------
+
+write_csv(model_data, file.path(PROCESSED, "dcid_model_ready.csv"))
+cat("\nSaved:", file.path(PROCESSED, "dcid_model_ready.csv"), "\n")
+
+cat("Feature Engineering complete.\n")

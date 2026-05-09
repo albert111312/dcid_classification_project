@@ -1,0 +1,15 @@
+cat > .gitignore << 'EOF'
+# Raw data (cannot redistribute)
+01_data/01_raw/
+01_data/02_processed
+03_outputs
+04_final_paper
+
+# Large files
+*.rds
+*.dta
+
+# OS files
+.DS_Store
+Thumbs.db
+EOF

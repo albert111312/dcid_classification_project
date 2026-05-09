@@ -1,0 +1,281 @@
+# =============================================================================
+# 01_data_import_cleaning.R
+# Purpose: Import raw DCID 2.0 data, clean, create dependent variable,
+#          and save processed dataset
+# =============================================================================
+
+# --- Load packages -----------------------------------------------------------
+library(tidyverse)
+library(readxl)
+
+# --- File Paths -----------------------------------------------------------
+ROOT <- here::here()
+DATA <- file.path(ROOT, "01_data")
+
+# --- 1. Import raw data ------------------------------------------------------
+
+dcid_raw <- read_excel(file.path(DATA, "01_raw", "DCID_2.0_Release_update_February_2023.xlsx"))
+
+cat("Raw data dimensions:", nrow(dcid_raw), "rows x", ncol(dcid_raw), "columns\n")
+cat("Column names:\n")
+print(names(dcid_raw))
+
+# --- 2. Inspect structure ----------------------------------------------------
+
+str(dcid_raw)
+summary(dcid_raw)
+
+# Check for missing values in key analysis variables
+key_variables <- c("severity", "cyber_objective", "targettype",
+              "information_operation", "Ransomware", "Supply Ch",
+              "method", "damage type", "Crit Inf")
+
+cat("\n--- Missing values in key variables ---\n")
+for (v in key_variables) {
+  cat(sprintf("  %s: %d missing\n", v, sum(is.na(dcid_raw[[v]]))))
+}
+
+# --- 3. Clean and rename variables -------------------------------------------
+
+dcid <- dcid_raw %>%
+  rename(
+    incident_num      = Cyberincidentnum,
+    dyad_pair         = Dyadpair,
+    state_a           = StateA,
+    state_b           = StateB,
+    incident_name     = Name,
+    start_date        = interactionstartdate,
+    end_date          = interactionenddate,
+    method            = method,
+    target_type       = targettype,
+    initiator         = initiator,
+    cyber_objective   = cyber_objective,
+    cio               = information_operation,
+    obj_achievement   = objective_achievement,
+    concession        = `Concession`,
+    third_party       = `3rdpartyinitiator`,
+    severity          = severity,
+    damage_type       = `damage type`,
+    crit_infra        = `Crit Inf`,
+    supply_chain      = `Supply Ch`,
+    ransomware        = Ransomware,
+    political_obj     = `Political Objective`,
+    sources1          = Sources1
+  ) %>%
+  # Keep only variables needed for analysis + identifiers
+  select(
+    incident_num, incident_name, state_a, state_b, initiator,
+    method, target_type, cyber_objective, cio, obj_achievement,
+    concession, third_party, severity, damage_type, crit_infra,
+    supply_chain, ransomware
+  )
+
+cat("\nCleaned data dimensions:", nrow(dcid), "rows x", ncol(dcid), "columns\n")
+
+# --- 4. Recode variables as proper types -------------------------------------
+
+dcid <- dcid %>%
+  mutate(
+    # Method: collapse decimal subcategories into main categories
+    # 1 = Vandalism, 2 = DDoS, 3 = Network Intrusion, 4 = Network Infiltration
+    method_cat = case_when(
+      method >= 1 & method < 2 ~ 1,
+      method >= 2 & method < 3 ~ 2,
+      method >= 3 & method < 4 ~ 3,
+      method >= 4 & method < 5 ~ 4
+    ),
+    method_cat = factor(method_cat,
+                        levels = 1:4,
+                        labels = c("Vandalism", "DDoS",
+                                   "Network_Intrusion", "Network_Infiltration")),
+
+    # Target type
+    target_type = factor(target_type,
+                         levels = 1:3,
+                         labels = c("Private", "Govt_NonMil", "Govt_Military")),
+
+    # Coercive objective
+    cyber_objective = factor(cyber_objective,
+                             levels = 1:4,
+                             labels = c("Disruption", "ST_Espionage",
+                                        "LT_Espionage", "Degradation")),
+
+    # Binary variables as factors
+    cio             = factor(cio, levels = 0:1, labels = c("Absent", "Present")),
+    obj_achievement = factor(obj_achievement, levels = 0:1, labels = c("No", "Yes")),
+    concession      = factor(concession, levels = 0:1, labels = c("No", "Yes")),
+    third_party     = factor(third_party, levels = 0:1, labels = c("No", "Yes")),
+    supply_chain    = factor(supply_chain, levels = 0:1, labels = c("No", "Yes")),
+    ransomware      = factor(ransomware, levels = 0:1, labels = c("No", "Yes")),
+
+    # Damage type
+    damage_type = factor(damage_type,
+                         levels = 1:4,
+                         labels = c("Direct_Immediate", "Direct_Delayed",
+                                    "Indirect_Immediate", "Indirect_Delayed")),
+
+    # Critical infrastructure - group into broader categories for modeling
+    crit_infra_cat = case_when(
+      crit_infra == 6              ~ "Defense",
+      crit_infra == 8              ~ "Energy",
+      crit_infra == 9              ~ "Financial",
+      crit_infra == 11             ~ "Govt_Facilities",
+      crit_infra == 13             ~ "Info_Technology",
+      crit_infra == 14             ~ "Nuclear",
+      crit_infra == 2              ~ "Commercial_Facilities",
+      crit_infra == 3              ~ "Communications",
+      crit_infra == 12             ~ "Healthcare",
+      crit_infra == 15             ~ "Transportation",
+      crit_infra == 17             ~ "Other_NonTraditional",
+      TRUE                         ~ "Other"
+    ),
+    crit_infra_cat = factor(crit_infra_cat),
+
+    # Severity as ordered factor
+    severity = factor(severity, levels = 1:10, ordered = TRUE)
+  )
+
+# --- 5. Create dependent variable --------------------------------------------
+#
+# OPERATIONALIZATION RULE (locked in):
+# An incident is STRATEGIC (1) if it meets 2 or more of these 4 indicators:
+#   1. Severity >= 4
+#   2. Coercive objective = Long-term espionage (3) or Degradation (4)
+#   3. Government target (target type 2 or 3)
+#   4. CIO present
+# Otherwise: TACTICAL (0)
+#
+# Literature support:
+#   - Severity: Valeriano, Jensen, & Maness (2018)
+#   - Coercive objective: Valeriano, Jensen, & Maness (2018)
+#   - Target type: Peter & Ohakpougwu (2024)
+#   - CIO: Nakasone (2019); DCID codebook
+# Requiring 2+ ensures no single variable drives the classification.
+
+dcid <- dcid %>%
+  mutate(
+    # Individual indicator flags
+    ind_severity   = as.integer(as.numeric(as.character(severity)) >= 4),
+    ind_objective  = as.integer(cyber_objective %in% c("LT_Espionage", "Degradation")),
+    ind_gov_target = as.integer(target_type %in% c("Govt_NonMil", "Govt_Military")),
+    ind_cio        = as.integer(cio == "Present"),
+
+    # Count how many indicators are met
+    indicator_count = ind_severity + ind_objective + ind_gov_target + ind_cio,
+
+    # Dependent variable
+    cyber_type = factor(
+      ifelse(indicator_count >= 2, "Strategic", "Tactical"),
+      levels = c("Tactical", "Strategic")
+    )
+  )
+
+# --- 6. Verify the dependent variable ----------------------------------------
+
+cat("\n===== DEPENDENT VARIABLE VERIFICATION =====\n")
+cat("\n--- Distribution ---\n")
+print(table(dcid$cyber_type))
+cat(sprintf("\nStrategic: %d (%.1f%%)\n",
+            sum(dcid$cyber_type == "Strategic"),
+            mean(dcid$cyber_type == "Strategic") * 100))
+cat(sprintf("Tactical:  %d (%.1f%%)\n",
+            sum(dcid$cyber_type == "Tactical"),
+            mean(dcid$cyber_type == "Tactical") * 100))
+
+# Cross-tabs
+cat("\nDV by each indicator:\n")
+cat("\nSeverity >= 4:\n")
+print(table(dcid$cyber_type, dcid$ind_severity,
+            dnn = c("cyber_type", "sev_ge4")))
+
+cat("\nObjective = LT Espionage or Degradation:\n")
+print(table(dcid$cyber_type, dcid$ind_objective,
+            dnn = c("cyber_type", "strat_obj")))
+
+cat("\nGovernment target:\n")
+print(table(dcid$cyber_type, dcid$ind_gov_target,
+            dnn = c("cyber_type", "gov_tgt")))
+
+cat("\nCIO present:\n")
+print(table(dcid$cyber_type, dcid$ind_cio,
+            dnn = c("cyber_type", "cio")))
+
+cat("\nIndicator count distribution:\n")
+print(table(dcid$indicator_count))
+
+# --- 7. Spot-check known cases -----------------------------------------------
+
+cat("\n--- Spot-checks ---\n")
+
+spot_check <- function(name_pattern, expected) {
+  row <- dcid %>% filter(grepl(name_pattern, incident_name, fixed = TRUE))
+  if (nrow(row) > 0) {
+    result <- as.character(row$cyber_type[1])
+    match_flag <- ifelse(result == expected, "OK", "** MISMATCH **")
+    cat(sprintf("  %-42s => %-10s (expect: %-10s) %s  [indicators=%d]\n",
+                substr(row$incident_name[1], 1, 42),
+                result, expected, match_flag,
+                row$indicator_count[1]))
+  }
+}
+
+spot_check("Stuxnet_A",                             "Strategic")
+spot_check("SUNBURST",                              "Strategic")
+spot_check("Sony Hack",                             "Strategic")
+spot_check("NotPetya_A",                            "Strategic")
+spot_check("WannaCry- US Critical Infrastructure",  "Strategic")
+spot_check("Operation Ababil",                      "Tactical")
+spot_check("GitHub Hack",                           "Tactical")
+spot_check("Yahoo breach 1",                        "Tactical")
+
+# --- 8. Prepare modeling dataset ---------------------------------------------
+#
+# DATA LEAKAGE NOTE:
+# The DV is constructed from severity, cyber_objective, target_type, and cio.
+# Including these as predictors = the models learn the coding rule, not the
+# underlying patterns. Two options:
+#
+# OPTION A (default below): Exclude the 4 DV-component variables.
+#   Predictors: method_cat, obj_achievement, concession, third_party,
+#               damage_type, crit_infra_cat, supply_chain, ransomware
+#   This tests whether OTHER incident characteristics predict the distinction.
+#
+# OPTION B: Include all variables. Change the select() below.
+#   This tests whether models can learn the composite coding rule.
+#   Models will perform very well but findings are less novel.
+#
+# DISCUSS WITH YOUR ADVISOR which approach fits your research question better.
+
+dcid_model <- dcid %>%
+  select(
+    cyber_type,         # DV
+    method_cat,         # Predictor
+    obj_achievement,    # Predictor
+    concession,         # Predictor
+    third_party,        # Predictor
+    damage_type,        # Predictor
+    crit_infra_cat,     # Predictor
+    supply_chain,       # Predictor
+    ransomware          # Predictor
+  )
+
+cat("\n--- Modeling dataset summary ---\n")
+cat("Rows:", nrow(dcid_model), "\n")
+cat("Predictors:", ncol(dcid_model) - 1, "\n")
+cat("\nMissing values:\n")
+print(colSums(is.na(dcid_model)))
+cat("\nStructure:\n")
+str(dcid_model)
+
+# --- 9. Save processed datasets ----------------------------------------------
+
+# Full cleaned dataset (all variables, for reference and EDA)
+write_csv(dcid %>% mutate(severity = as.character(severity)),
+          file.path(DATA, "02_processed", "dcid_cleaned.csv"))
+
+# Modeling-ready dataset
+write_csv(dcid_model, file.path(DATA, "02_processed", "dcid_model.csv"))
+
+cat("\n=== Script 01 complete ===\n")
+cat("Saved: 01_data/processed/dcid_cleaned.csv  (full cleaned data)\n")
+cat("Saved: 01_data/processed/dcid_model.csv    (modeling-ready subset)\n")

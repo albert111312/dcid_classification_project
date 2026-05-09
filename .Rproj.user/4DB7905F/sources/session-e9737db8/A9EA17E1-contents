@@ -1,0 +1,108 @@
+# ==============================================================================
+# Script:  05_logistic_regression.R
+# Purpose: Fit logistic regression model, evaluate on test set
+# ==============================================================================
+
+# --- 1. Load train/test data -------------------------------------------------
+
+if (!exists("train_data")) {
+  train_data <- read_csv("01_data/02_processed/dcid_train.csv", show_col_types = FALSE) %>% reload_factors_A()
+  test_data  <- read_csv("01_data/02_processed/dcid_test.csv",  show_col_types = FALSE) %>% reload_factors_A()
+  cat("Loaded train/test from CSV.\n")
+}
+
+# --- 2. Fit logistic regression -----------------------------------------------
+
+logit_model <- glm(cyber_type ~ method_cat + obj_achievement + concession +
+                     third_party + damage_type_collapsed + crit_infra_collapsed +
+                     supply_chain + ransomware,
+                   data = train_data,
+                   family = binomial(link = "logit"))
+
+cat("\n===== LOGISTIC REGRESSION SUMMARY =====\n")
+summary(logit_model)
+
+# Odds ratios with profile-likelihood CIs (more reliable than Wald for sparse
+# predictors). Falls back to Wald CIs if profiling fails (e.g., separation).
+# suppressMessages silences the "Waiting for profiling..." chatter.
+cat("\n--- Odds Ratios ---\n")
+ci <- tryCatch(
+  suppressMessages(confint(logit_model)),
+  error = function(e) {
+    warning("Profile-likelihood CI failed. ",
+            "Falling back to Wald CIs. Original error: ", conditionMessage(e))
+    confint.default(logit_model)
+  }
+)
+or_table <- data.frame(
+  Variable     = names(coef(logit_model)),
+  Coefficient  = coef(logit_model),
+  Odds_Ratio   = exp(coef(logit_model)),
+  CI_Lower     = exp(ci[, 1]),
+  CI_Upper     = exp(ci[, 2]),
+  P_Value      = summary(logit_model)$coefficients[, 4]
+)
+print(or_table, digits = 3)
+write_csv(or_table, "03_outputs/tables/logit_odds_ratios.csv")
+
+odds <- or_table %>%
+  mutate(across(where(is.numeric), ~round(.x, 3)))
+table_to_png(odds,
+             "Logistic Regression — Odds Ratios",
+             "03_outputs/tables/logit_odds_ratios.png",
+             col_widths = c(2.5, 1, 1, 1, 1, 1))
+
+# --- 3. Predict on test set ---------------------------------------------------
+
+logit_test_probs <- predict(logit_model, newdata = test_data, type = "response")
+logit_test_pred  <- factor(ifelse(logit_test_probs > 0.5, "Strategic", "Tactical"),
+                     levels = c("Tactical", "Strategic"))
+
+# --- 4. Confusion matrix and metrics -----------------------------------------
+
+cm_logit <- confusionMatrix(logit_test_pred, test_data$cyber_type,
+                             positive = "Strategic")
+
+plot_confusion_matrix(cm_logit, "Logistic Regression",
+                      "03_outputs/tables/cm_logit.png")
+
+cat("\n===== CONFUSION MATRIX (LOGISTIC REGRESION) =====\n")
+print(cm_logit)
+
+# --- 5. ROC and AUC ----------------------------------------------------------
+
+roc_logit <- roc(test_data$cyber_type, logit_test_probs,
+                 levels = c("Tactical", "Strategic"),
+                 direction = "<")
+
+cat(sprintf("\nAUC: %.4f\n", auc(roc_logit)))
+
+png("03_outputs/figures/model_diagnostics/roc_logit.png", width = 600, height = 500)
+plot(roc_logit, main = "ROC Curve — Logistic Regression",
+     col = "#2C3E50", lwd = 2, print.auc = TRUE)
+dev.off()
+
+# --- 6. Save model and results -----------------------------------------------
+
+saveRDS(logit_model, "03_outputs/models/logit_model.rds")
+
+logit_results <- list(
+  model       = logit_model,
+  predictions = logit_test_pred,
+  probs       = logit_test_probs,
+  confusion   = cm_logit,
+  roc         = roc_logit,
+  auc         = as.numeric(auc(roc_logit)),
+  metrics     = data.frame(
+    Model     = "Logistic Regression",
+    Accuracy  = cm_logit$overall["Accuracy"],
+    Precision = cm_logit$byClass["Precision"],
+    Recall    = cm_logit$byClass["Recall"],
+    F1        = cm_logit$byClass["F1"],
+    AUC       = as.numeric(auc(roc_logit))
+  )
+)
+saveRDS(logit_results, "03_outputs/models/logit_results.rds")
+
+cat("\nSaved: logit_model.rds, logit_results.rds\n")
+cat("Logistic Regression complete.\n")

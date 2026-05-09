@@ -1,0 +1,364 @@
+# ==============================================================================
+# Script:  09_option_b_full_predictors.R
+# Purpose: Rerun all three models with the full predictor set (Option B),
+#          including severity, cyber_objective, target_type, and CIO.
+#          Compare Option A vs Option B results side by side.
+# Prereq:  Run scripts 01-08 first (Option A results must exist)
+# ==============================================================================
+
+
+# =============================================================================
+# 1. LOAD AND PREPARE DATA
+# =============================================================================
+
+# Load full cleaned dataset (has all variables including DV components)
+dcid <- read_csv("01_data/processed/dcid_cleaned.csv", show_col_types = FALSE) %>%
+  mutate(
+    method_cat      = factor(method_cat),
+    target_type     = factor(target_type),
+    cyber_objective = factor(cyber_objective),
+    cio             = factor(cio),
+    obj_achievement = factor(obj_achievement),
+    concession      = factor(concession),
+    third_party     = factor(third_party),
+    supply_chain    = factor(supply_chain),
+    ransomware      = factor(ransomware),
+    damage_type     = factor(damage_type),
+    crit_infra_cat  = factor(crit_infra_cat),
+    severity        = as.numeric(severity),
+    cyber_type      = factor(cyber_type, levels = c("Tactical", "Strategic"))
+  )
+
+# Apply the same feature engineering as Script 03
+dcid <- dcid %>%
+  mutate(
+    crit_infra_collapsed = case_when(
+      crit_infra_cat %in% c("Govt_Facilities", "Defense", "Nuclear")
+        ~ "Govt_Defense",
+      crit_infra_cat %in% c("Communications", "Energy", "Healthcare",
+                             "Transportation", "Other")
+        ~ "Civilian_Infra",
+      crit_infra_cat %in% c("Commercial_Facilities", "Financial",
+                             "Info_Technology", "Other_NonTraditional")
+        ~ "Commercial",
+      TRUE ~ "Commercial"
+    ),
+    crit_infra_collapsed = factor(crit_infra_collapsed,
+                                   levels = c("Commercial", "Civilian_Infra", "Govt_Defense")),
+    damage_type_collapsed = fct_collapse(damage_type,
+      Indirect = c("Indirect_Immediate", "Indirect_Delayed")
+    )
+  )
+
+# Build Option B modeling dataset: all 12 predictors
+model_data_b <- dcid %>%
+  select(
+    cyber_type,
+    # --- Option A predictors (8) ---
+    method_cat,
+    obj_achievement,
+    concession,
+    third_party,
+    damage_type_collapsed,
+    crit_infra_collapsed,
+    supply_chain,
+    ransomware,
+    # --- DV component predictors (4) - NEW for Option B ---
+    severity,
+    cyber_objective,
+    target_type,
+    cio
+  )
+
+cat("Option B modeling dataset:", nrow(model_data_b), "rows x", ncol(model_data_b) - 1, "predictors\n")
+
+# =============================================================================
+# 2. TRAIN/TEST SPLIT — SAME SEED AS OPTION A
+# =============================================================================
+
+set.seed(42)
+
+train_index_b <- createDataPartition(model_data_b$cyber_type,
+                                      p = 0.70,
+                                      list = FALSE,
+                                      times = 1)
+
+train_b <- model_data_b[train_index_b, ]
+test_b  <- model_data_b[-train_index_b, ]
+
+cat(sprintf("\nTrain: n = %d | Test: n = %d\n", nrow(train_b), nrow(test_b)))
+cat("Train class split:\n")
+print(prop.table(table(train_b$cyber_type)))
+cat("Test class split:\n")
+print(prop.table(table(test_b$cyber_type)))
+
+# Formula with all 12 predictors
+formula_b <- cyber_type ~ method_cat + obj_achievement + concession +
+  third_party + damage_type_collapsed + crit_infra_collapsed +
+  supply_chain + ransomware +
+  severity + cyber_objective + target_type + cio
+
+# =============================================================================
+# 3. LOGISTIC REGRESSION — OPTION B
+# =============================================================================
+
+cat("\n", paste(rep("=", 60), collapse = ""), "\n")
+cat("LOGISTIC REGRESSION — OPTION B (12 predictors)\n")
+cat(paste(rep("=", 60), collapse = ""), "\n")
+
+logit_b <- glm(formula_b, data = train_b, family = binomial(link = "logit"))
+summary(logit_b)
+
+# Check for separation warnings
+if (logit_b$converged) {
+  cat("\nModel converged successfully.\n")
+} else {
+  cat("\n** WARNING: Model did not converge — possible separation **\n")
+}
+
+# Odds ratios
+or_b <- data.frame(
+  Variable    = names(coef(logit_b)),
+  Coefficient = coef(logit_b),
+  Odds_Ratio  = exp(coef(logit_b)),
+  CI_Lower    = exp(confint.default(logit_b)[, 1]),
+  CI_Upper    = exp(confint.default(logit_b)[, 2]),
+  P_Value     = summary(logit_b)$coefficients[, 4]
+)
+cat("\nOdds Ratios:\n")
+print(or_b, digits = 3)
+write_csv(or_b, "03_outputs/tables/logit_odds_ratios_optionB.csv")
+
+# Predict
+logit_probs_b <- predict(logit_b, newdata = test_b, type = "response")
+logit_pred_b  <- factor(ifelse(logit_probs_b > 0.5, "Strategic", "Tactical"),
+                         levels = c("Tactical", "Strategic"))
+
+cm_logit_b <- confusionMatrix(logit_pred_b, test_b$cyber_type, positive = "Strategic")
+roc_logit_b <- roc(test_b$cyber_type, logit_probs_b,
+                    levels = c("Tactical", "Strategic"), direction = "<")
+
+cat("\nConfusion Matrix:\n")
+print(cm_logit_b)
+cat(sprintf("AUC: %.4f\n", auc(roc_logit_b)))
+
+# =============================================================================
+# 4. DECISION TREE — OPTION B
+# =============================================================================
+
+cat("\n", paste(rep("=", 60), collapse = ""), "\n")
+cat("DECISION TREE — OPTION B (12 predictors)\n")
+cat(paste(rep("=", 60), collapse = ""), "\n")
+
+dtree_full_b <- rpart(formula_b, data = train_b, method = "class",
+                       control = rpart.control(cp = 0.001, minsplit = 10))
+printcp(dtree_full_b)
+
+# Prune with 1-SE rule
+cp_tab_b    <- dtree_full_b$cptable
+min_xerr_b  <- min(cp_tab_b[, "xerror"])
+min_xstd_b  <- cp_tab_b[which.min(cp_tab_b[, "xerror"]), "xstd"]
+cp_1se_b    <- max(cp_tab_b[cp_tab_b[, "xerror"] <= min_xerr_b + min_xstd_b, "CP"])
+
+cat(sprintf("\n1-SE rule cp: %.5f\n", cp_1se_b))
+dtree_b <- prune(dtree_full_b, cp = cp_1se_b)
+
+# Tree plot
+png("03_outputs/figures/model_diagnostics/decision_tree_optionB.png", width = 900, height = 600)
+rpart.plot(dtree_b, type = 4, extra = 104, fallen.leaves = TRUE,
+           main = "Decision Tree — Option B (All 12 Predictors)",
+           box.palette = c("#E74C3C", "#2C3E50"))
+dev.off()
+
+cat("\nVariable Importance:\n")
+print(sort(dtree_b$variable.importance, decreasing = TRUE))
+
+# Predict
+dtree_probs_b <- predict(dtree_b, newdata = test_b, type = "prob")[, "Strategic"]
+dtree_pred_b  <- predict(dtree_b, newdata = test_b, type = "class")
+
+cm_dtree_b <- confusionMatrix(dtree_pred_b, test_b$cyber_type, positive = "Strategic")
+roc_dtree_b <- roc(test_b$cyber_type, dtree_probs_b,
+                    levels = c("Tactical", "Strategic"), direction = "<")
+
+cat("\nConfusion Matrix:\n")
+print(cm_dtree_b)
+cat(sprintf("AUC: %.4f\n", auc(roc_dtree_b)))
+
+# =============================================================================
+# 5. RANDOM FOREST — OPTION B
+# =============================================================================
+
+cat("\n", paste(rep("=", 60), collapse = ""), "\n")
+cat("RANDOM FOREST — OPTION B (12 predictors)\n")
+cat(paste(rep("=", 60), collapse = ""), "\n")
+
+# Tune mtry
+n_pred_b <- 12
+cat("Tuning mtry...\n")
+tuning_b <- data.frame(mtry = integer(), OOB_Error = numeric())
+
+for (m in 1:n_pred_b) {
+  set.seed(42)
+  rf_temp <- randomForest(formula_b, data = train_b, ntree = 500, mtry = m)
+  oob_err <- rf_temp$err.rate[500, "OOB"]
+  tuning_b <- rbind(tuning_b, data.frame(mtry = m, OOB_Error = oob_err))
+  cat(sprintf("  mtry = %2d: OOB error = %.4f\n", m, oob_err))
+}
+
+best_mtry_b <- tuning_b$mtry[which.min(tuning_b$OOB_Error)]
+cat(sprintf("\nBest mtry: %d (OOB error: %.4f)\n", best_mtry_b,
+            min(tuning_b$OOB_Error)))
+
+# Fit final RF
+set.seed(42)
+rf_b <- randomForest(formula_b, data = train_b, ntree = 500,
+                      mtry = best_mtry_b, importance = TRUE)
+print(rf_b)
+
+# Variable importance
+cat("\nVariable Importance:\n")
+imp_b <- as.data.frame(importance(rf_b))
+imp_b$Variable <- rownames(imp_b)
+imp_b <- imp_b %>% arrange(desc(MeanDecreaseGini))
+print(imp_b)
+
+png("03_outputs/figures/model_diagnostics/rf_importance_optionB.png", width = 700, height = 500)
+varImpPlot(rf_b, main = "Random Forest Variable Importance — Option B")
+dev.off()
+
+# Predict
+rf_pred_b  <- predict(rf_b, newdata = test_b, type = "class")
+rf_probs_b <- predict(rf_b, newdata = test_b, type = "prob")[, "Strategic"]
+
+cm_rf_b <- confusionMatrix(rf_pred_b, test_b$cyber_type, positive = "Strategic")
+roc_rf_b <- roc(test_b$cyber_type, rf_probs_b,
+                 levels = c("Tactical", "Strategic"), direction = "<")
+
+cat("\nConfusion Matrix:\n")
+print(cm_rf_b)
+cat(sprintf("AUC: %.4f\n", auc(roc_rf_b)))
+
+# =============================================================================
+# 6. OPTION B MODEL COMPARISON
+# =============================================================================
+
+cat("\n", paste(rep("=", 60), collapse = ""), "\n")
+cat("OPTION B — MODEL COMPARISON\n")
+cat(paste(rep("=", 60), collapse = ""), "\n")
+
+comparison_b <- data.frame(
+  Model     = c("Logistic Regression", "Decision Tree", "Random Forest"),
+  Option    = "B (12 predictors)",
+  Accuracy  = c(cm_logit_b$overall["Accuracy"],
+                cm_dtree_b$overall["Accuracy"],
+                cm_rf_b$overall["Accuracy"]),
+  Precision = c(cm_logit_b$byClass["Precision"],
+                cm_dtree_b$byClass["Precision"],
+                cm_rf_b$byClass["Precision"]),
+  Recall    = c(cm_logit_b$byClass["Recall"],
+                cm_dtree_b$byClass["Recall"],
+                cm_rf_b$byClass["Recall"]),
+  F1        = c(cm_logit_b$byClass["F1"],
+                cm_dtree_b$byClass["F1"],
+                cm_rf_b$byClass["F1"]),
+  AUC       = c(as.numeric(auc(roc_logit_b)),
+                as.numeric(auc(roc_dtree_b)),
+                as.numeric(auc(roc_rf_b)))
+)
+
+cat("\nOption B Results:\n")
+print(comparison_b, digits = 4)
+write_csv(comparison_b, "03_outputs/tables/model_comparison_optionB.csv")
+
+# ROC comparison — Option B
+png("03_outputs/figures/final_figures/roc_comparison_optionB.png", width = 700, height = 600)
+plot(roc_logit_b, col = "#2C3E50", lwd = 2,
+     main = "ROC Curve Comparison — Option B (All 12 Predictors)")
+plot(roc_dtree_b, col = "#27AE60", lwd = 2, add = TRUE)
+plot(roc_rf_b,    col = "#E67E22", lwd = 2, add = TRUE)
+abline(a = 0, b = 1, lty = 2, col = "gray50")
+legend("bottomright",
+       legend = c(
+         sprintf("Logistic Regression (AUC = %.3f)", auc(roc_logit_b)),
+         sprintf("Decision Tree (AUC = %.3f)", auc(roc_dtree_b)),
+         sprintf("Random Forest (AUC = %.3f)", auc(roc_rf_b))
+       ),
+       col = c("#2C3E50", "#27AE60", "#E67E22"), lwd = 2)
+dev.off()
+
+# =============================================================================
+# 7. OPTION A vs OPTION B SIDE-BY-SIDE COMPARISON
+# =============================================================================
+
+cat("\n", paste(rep("=", 60), collapse = ""), "\n")
+cat("OPTION A vs OPTION B — SIDE-BY-SIDE\n")
+cat(paste(rep("=", 60), collapse = ""), "\n")
+
+# Load Option A results
+logit_a <- readRDS("03_outputs/models/logit_results.rds")
+dtree_a <- readRDS("03_outputs/models/dtree_results.rds")
+rf_a    <- readRDS("03_outputs/models/rf_results.rds")
+
+comparison_a <- data.frame(
+  Model     = c("Logistic Regression", "Decision Tree", "Random Forest"),
+  Option    = "A (8 predictors)",
+  Accuracy  = c(logit_a$metrics$Accuracy,  dtree_a$metrics$Accuracy,  rf_a$metrics$Accuracy),
+  Precision = c(logit_a$metrics$Precision, dtree_a$metrics$Precision, rf_a$metrics$Precision),
+  Recall    = c(logit_a$metrics$Recall,    dtree_a$metrics$Recall,    rf_a$metrics$Recall),
+  F1        = c(logit_a$metrics$F1,        dtree_a$metrics$F1,        rf_a$metrics$F1),
+  AUC       = c(logit_a$auc,               dtree_a$auc,               rf_a$auc)
+)
+
+full_comparison <- bind_rows(comparison_a, comparison_b) %>%
+  arrange(Model, Option)
+
+cat("\n")
+print(full_comparison, digits = 4)
+write_csv(full_comparison, "03_outputs/tables/model_comparison_A_vs_B.csv")
+
+# Improvement from A to B
+cat("\n--- Performance Change (B minus A) ---\n")
+for (mod in c("Logistic Regression", "Decision Tree", "Random Forest")) {
+  a_row <- comparison_a %>% filter(Model == mod)
+  b_row <- comparison_b %>% filter(Model == mod)
+  cat(sprintf("\n%s:\n", mod))
+  cat(sprintf("  Accuracy:  %.3f -> %.3f (%+.3f)\n", a_row$Accuracy,  b_row$Accuracy,  b_row$Accuracy - a_row$Accuracy))
+  cat(sprintf("  Precision: %.3f -> %.3f (%+.3f)\n", a_row$Precision, b_row$Precision, b_row$Precision - a_row$Precision))
+  cat(sprintf("  Recall:    %.3f -> %.3f (%+.3f)\n", a_row$Recall,    b_row$Recall,    b_row$Recall - a_row$Recall))
+  cat(sprintf("  F1:        %.3f -> %.3f (%+.3f)\n", a_row$F1,        b_row$F1,        b_row$F1 - a_row$F1))
+  cat(sprintf("  AUC:       %.3f -> %.3f (%+.3f)\n", a_row$AUC,       b_row$AUC,       b_row$AUC - a_row$AUC))
+}
+
+# Combined ROC plot — all 6 models
+png("03_outputs/figures/final_figures/roc_comparison_A_vs_B.png", width = 800, height = 650)
+plot(logit_a$roc, col = "#2C3E50", lwd = 2, lty = 2,
+     main = "ROC Comparison — Option A (dashed) vs Option B (solid)")
+plot(dtree_a$roc, col = "#27AE60", lwd = 2, lty = 2, add = TRUE)
+plot(rf_a$roc,    col = "#E67E22", lwd = 2, lty = 2, add = TRUE)
+plot(roc_logit_b, col = "#2C3E50", lwd = 2, lty = 1, add = TRUE)
+plot(roc_dtree_b, col = "#27AE60", lwd = 2, lty = 1, add = TRUE)
+plot(roc_rf_b,    col = "#E67E22", lwd = 2, lty = 1, add = TRUE)
+abline(a = 0, b = 1, lty = 3, col = "gray50")
+legend("bottomright", cex = 0.8,
+       legend = c(
+         sprintf("Logit A (AUC=%.3f)", logit_a$auc),
+         sprintf("Logit B (AUC=%.3f)", auc(roc_logit_b)),
+         sprintf("Tree A (AUC=%.3f)", dtree_a$auc),
+         sprintf("Tree B (AUC=%.3f)", auc(roc_dtree_b)),
+         sprintf("RF A (AUC=%.3f)", rf_a$auc),
+         sprintf("RF B (AUC=%.3f)", auc(roc_rf_b))
+       ),
+       col = rep(c("#2C3E50", "#27AE60", "#E67E22"), each = 2),
+       lty = rep(c(2, 1), 3), lwd = 2)
+dev.off()
+
+cat("\n=== Script 09 complete ===\n")
+cat("Outputs:\n")
+cat("  03_outputs/tables/model_comparison_optionB.csv\n")
+cat("  03_outputs/tables/model_comparison_A_vs_B.csv\n")
+cat("  03_outputs/tables/logit_odds_ratios_optionB.csv\n")
+cat("  03_outputs/figures/model_diagnostics/decision_tree_optionB.png\n")
+cat("  03_outputs/figures/model_diagnostics/rf_importance_optionB.png\n")
+cat("  03_outputs/figures/final_figures/roc_comparison_optionB.png\n")
+cat("  03_outputs/figures/final_figures/roc_comparison_A_vs_B.png\n")

@@ -1,0 +1,26 @@
+{
+    "id": "43556358",
+    "path": "/mnt/raid1_4tb/Files/DCID_Classifaction_Project/02_code/07_random_forest_A.R",
+    "project_path": "02_code/07_random_forest_A.R",
+    "type": "r_source",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1777572645262.0,
+    "source_on_save": false,
+    "relative_order": 3,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "89,0",
+        "scrollLine": "71"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1777572433,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1777572433,
+    "read_only": false,
+    "read_only_alternatives": []
+}

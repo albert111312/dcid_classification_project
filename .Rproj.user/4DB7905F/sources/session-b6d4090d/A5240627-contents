@@ -1,0 +1,81 @@
+# ==============================================================================
+# 00_master.R
+# Purpose: Master script to run the entire DCID Classification Pipeline
+# Author:  Albert Elam
+# Date:    April 30, 2026
+# ==============================================================================
+
+# Clear environment
+rm(list = ls())
+gc()
+
+# Load configuration
+source("00_config.R")
+
+# ==============================================================================
+# STEP 1: Data Import & Cleaning
+# ==============================================================================
+cat("\n========== STEP 1: Data Import & Cleaning ==========\n")
+source(file.path(CODE, "01_data_import_cleaning.R"))
+
+
+# ==============================================================================
+# STEP 2: Exploratory Analysis
+# ==============================================================================
+cat("\n========== STEP 2: Exploratory Analysis ==========\n")
+source(file.path(CODE, "02_exploratory_analysis.R"))
+
+
+# ==============================================================================
+# STEP 3: Feature Engineering
+# ==============================================================================
+cat("\n========== STEP 3: Feature Engineering ==========\n")
+source(file.path(CODE, "03_feature_engineering.R"))
+
+
+# ==============================================================================
+# STEP 4: Split Training & Testing Data
+# ==============================================================================
+cat("\n========== STEP 4: Split Training & Testing Data ==========\n")
+source(file.path(CODE, "04_train_test_split.R"))
+
+
+# ==============================================================================
+# STEP 5. Classification Method 1: Logistic Regression
+# ==============================================================================
+cat("\n======== STEP 5. Classification Method 1: Logistic Regression ========\n")
+source(file.path(CODE, "05_logistic_regression_A.R"))
+source(file.path(CODE, "09_logistic_regression_B.R"))
+
+
+# ==============================================================================
+# STEP 6. Classification Method 2: Decision Tree
+# ==============================================================================
+cat("\n========== STEP 6. Classification Method 2: Decision Tree ==========\n")
+source(file.path(CODE, "06_decision_tree_A.R"))
+source(file.path(CODE, "10_decision_tree_B.R"))
+
+
+# ==============================================================================
+# STEP 7. Classification Method 3: Random Forest
+# ==============================================================================
+cat("\n========== STEP 7. Classification Method 3: Random Forest ==========\n")
+source(file.path(CODE, "07_random_forest_A.R"))
+source(file.path(CODE, "11_random_forest_B.R"))
+
+
+# ==============================================================================
+# STEP 8. Model Comparison
+# ==============================================================================
+cat("\n=============== STEP 8. Model Comparison ===============\n")
+source(file.path(CODE, "08_model_comparison_A.R"))
+source(file.path(CODE, "12_model_comparison_B.R"))
+
+# ==============================================================================
+# STEP 9. Option Comparison
+# ==============================================================================
+cat("\n=============== STEP 9. Option Comparison ===============\n")
+source(file.path(CODE, "13_option_comparison.R"))
+
+
+cat("\n========== PIPELINE COMPLETE ==========\n")
